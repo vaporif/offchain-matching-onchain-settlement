@@ -28,17 +28,18 @@ fn main() {
         .expect("bun install failed — is bun installed?");
     assert!(status.success(), "bun install failed");
 
-    let solc = Command::new("which")
-        .arg("solc")
-        .output()
-        .expect("which solc failed");
-    let solc_path = String::from_utf8(solc.stdout).unwrap();
-    let solc_path = solc_path.trim();
+    let mut cmd = Command::new("forge");
+    cmd.args(["build"]).current_dir(&contracts_dir);
 
-    let status = Command::new("forge")
-        .args(["build"])
-        .env("FOUNDRY_SOLC", solc_path)
-        .current_dir(&contracts_dir)
+    if let Ok(output) = Command::new("which").arg("solc").output() {
+        let path = String::from_utf8_lossy(&output.stdout);
+        let path = path.trim();
+        if !path.is_empty() && output.status.success() {
+            cmd.env("FOUNDRY_SOLC", path);
+        }
+    }
+
+    let status = cmd
         .status()
         .expect("forge build failed — is foundry installed?");
     assert!(status.success(), "forge build failed");
