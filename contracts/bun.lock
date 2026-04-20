@@ -1,0 +1,17 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "@openzeppelin/contracts": "^5.6.0",
+        "forge-std": "github:foundry-rs/forge-std#v1.15.0",
+      },
+    },
+  },
+  "packages": {
+    "@openzeppelin/contracts": ["@openzeppelin/contracts@5.6.1", "", {}, "sha512-Ly6SlsVJ3mj+b18W3R8gNufB7dTICT105fJhodGAGgyC2oqnBAhqSiNDJ8V8DLY05cCz81GLI0CU5vNYA1EC/w=="],
+
+    "forge-std": ["forge-std@github:foundry-rs/forge-std#0844d7e", {}, "foundry-rs-forge-std-0844d7e", "sha512-IFVoUt33vyL6694tcykownk5fKlN1FaVP2ZIOVQs8CZ8oIi52m5TKjb1nV8PF6vvnIQhUIp2s8D0Am5HcqskoA=="],
+  }
+}
