@@ -1,0 +1,13 @@
+[package]
+name = "settlement-evm"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+types = { workspace = true }
+settlement-core = { workspace = true }
+alloy = { workspace = true }
+eyre = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }

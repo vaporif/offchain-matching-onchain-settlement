@@ -1,0 +1,11 @@
+[package]
+name = "e2e-tests"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+tokio = { workspace = true }
+alloy = { workspace = true }
+eyre = { workspace = true }

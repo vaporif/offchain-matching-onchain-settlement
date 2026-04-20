@@ -1,0 +1,11 @@
+[package]
+name = "matching-engine"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+types = { workspace = true }
+alloy = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

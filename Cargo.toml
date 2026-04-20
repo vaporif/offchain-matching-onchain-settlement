@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/types",
+    "crates/matching-engine",
+    "crates/settlement-core",
+    "crates/settlement-evm",
+    "crates/gateway",
+    "crates/cli",
+    "crates/e2e-tests",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+
+[workspace.dependencies]
+# Shared
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+eyre = "0.6"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Alloy (Ethereum)
+alloy = { version = "1", features = [
+    "full",
+    "node-bindings",
+] }
+
+# Web
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", features = ["json"] }
+
+# Streaming
+tokio-stream = "0.1"
+
+# Testing
+proptest = "1"
+
+# Internal
+types = { path = "crates/types" }
+matching-engine = { path = "crates/matching-engine" }
+settlement-core = { path = "crates/settlement-core" }
+settlement-evm = { path = "crates/settlement-evm" }
+gateway = { path = "crates/gateway" }
