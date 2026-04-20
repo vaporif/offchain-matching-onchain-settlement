@@ -8,6 +8,10 @@
     crane = {
       url = "github:ipetkov/crane";
     };
+    sp1 = {
+      url = "github:vaporif/sp1-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -15,12 +19,16 @@
     nixpkgs,
     fenix,
     crane,
+    sp1,
     ...
   }: let
     systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
     forAllSystems = f:
       nixpkgs.lib.genAttrs systems (system: let
-        pkgs = import nixpkgs {inherit system;};
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [sp1.overlays.default];
+        };
       in
         f {
           inherit pkgs;
@@ -59,6 +67,30 @@
             pkgs.cargo-nextest
             pkgs.foundry
           ]
+          ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.apple-sdk_15
+          ];
+
+        env = {
+          RUST_BACKTRACE = "1";
+          RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
+        };
+      };
+
+      sp1 = pkgs.mkShell {
+        packages =
+          [
+            toolchain
+            pkgs.just
+            pkgs.taplo
+            pkgs.typos
+            pkgs.cargo-nextest
+            pkgs.foundry
+          ]
+          ++ (with pkgs.sp1."v6.1.0"; [
+            cargo-prove
+            sp1-rust-toolchain
+          ])
           ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             pkgs.apple-sdk_15
           ];
