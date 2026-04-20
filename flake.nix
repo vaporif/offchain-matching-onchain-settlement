@@ -38,6 +38,30 @@
             fenix.packages.${system}.stable.toolchain;
         });
   in {
+    packages = forAllSystems ({
+      pkgs,
+      craneLib,
+      ...
+    }: let
+      src = craneLib.cleanCargoSource ./.;
+      commonArgs = {
+        inherit src;
+        pname = "exchange";
+        version = "0.1.0";
+        strictDeps = true;
+        buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
+          pkgs.apple-sdk_15
+        ];
+      };
+      cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+    in {
+      default = craneLib.buildPackage (commonArgs
+        // {
+          inherit cargoArtifacts;
+          doCheck = false;
+        });
+    });
+
     formatter = nixpkgs.lib.genAttrs systems (system: nixpkgs.legacyPackages.${system}.alejandra);
 
     devShells = nixpkgs.lib.genAttrs systems (system: let
