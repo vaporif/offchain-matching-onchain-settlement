@@ -49,9 +49,16 @@
         pname = "exchange";
         version = "0.1.0";
         strictDeps = true;
-        buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
-          pkgs.apple-sdk_15
+        nativeBuildInputs = [
+          pkgs.pkg-config
         ];
+        buildInputs =
+          [
+            pkgs.openssl
+          ]
+          ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.apple-sdk_15
+          ];
       };
       cargoArtifacts = craneLib.buildDepsOnly commonArgs;
     in {
