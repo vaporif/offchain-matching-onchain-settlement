@@ -45,7 +45,11 @@ impl<S: Settlement + 'static> DepositService<S> {
             return Ok(());
         }
 
-        info!(from = start_block, to = head, "replaying historical deposits");
+        info!(
+            from = start_block,
+            to = head,
+            "replaying historical deposits"
+        );
 
         let mut current = start_block;
         while current <= head {
@@ -59,9 +63,16 @@ impl<S: Settlement + 'static> DepositService<S> {
             if !deposits.is_empty() {
                 let mut state = self.state.lock().await;
                 for deposit in &deposits {
-                    state.ledger.credit(deposit.user, deposit.token, deposit.amount);
+                    state
+                        .ledger
+                        .credit(deposit.user, deposit.token, deposit.amount);
                 }
-                info!(count = deposits.len(), from = current, to = end, "credited historical deposits");
+                info!(
+                    count = deposits.len(),
+                    from = current,
+                    to = end,
+                    "credited historical deposits"
+                );
             }
 
             tokio::task::spawn_blocking({
@@ -103,7 +114,9 @@ impl<S: Settlement + 'static> DepositService<S> {
 
                 {
                     let mut state = svc.state.lock().await;
-                    state.ledger.credit(deposit.user, deposit.token, deposit.amount);
+                    state
+                        .ledger
+                        .credit(deposit.user, deposit.token, deposit.amount);
                 }
 
                 // Only persist when we advance to a new block
@@ -136,7 +149,7 @@ impl<S: Settlement + 'static> DepositService<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{Address, address, U256};
+    use alloy::primitives::{Address, U256, address};
     use std::pin::Pin;
     use tokio_stream::Stream;
     use types::{BatchSettlement, Deposit};
@@ -153,11 +166,7 @@ mod tests {
             unimplemented!()
         }
 
-        async fn get_balance(
-            &self,
-            _user: Address,
-            _token: Address,
-        ) -> eyre::Result<U256> {
+        async fn get_balance(&self, _user: Address, _token: Address) -> eyre::Result<U256> {
             unimplemented!()
         }
 
@@ -186,9 +195,24 @@ mod tests {
         let user = address!("0x1111111111111111111111111111111111111111");
         let token = address!("0x2222222222222222222222222222222222222222");
         vec![
-            Deposit { user, token, amount: U256::from(100), block_number: 10 },
-            Deposit { user, token, amount: U256::from(200), block_number: 15 },
-            Deposit { user, token, amount: U256::from(300), block_number: 2005 },
+            Deposit {
+                user,
+                token,
+                amount: U256::from(100),
+                block_number: 10,
+            },
+            Deposit {
+                user,
+                token,
+                amount: U256::from(200),
+                block_number: 15,
+            },
+            Deposit {
+                user,
+                token,
+                amount: U256::from(300),
+                block_number: 2005,
+            },
         ]
     }
 
@@ -196,7 +220,9 @@ mod tests {
     async fn sync_historical_credits_ledger() {
         let dir = tempfile::TempDir::new().unwrap();
         let db = Arc::new(Db::open(&dir.path().join("test.db")).unwrap());
-        let settlement = Arc::new(MockSettlement { deposits: test_deposits() });
+        let settlement = Arc::new(MockSettlement {
+            deposits: test_deposits(),
+        });
 
         let (state, _rx) = AppState::new(
             1,
@@ -218,7 +244,9 @@ mod tests {
     async fn sync_historical_persists_block_number() {
         let dir = tempfile::TempDir::new().unwrap();
         let db = Arc::new(Db::open(&dir.path().join("test.db")).unwrap());
-        let settlement = Arc::new(MockSettlement { deposits: test_deposits() });
+        let settlement = Arc::new(MockSettlement {
+            deposits: test_deposits(),
+        });
 
         let (state, _rx) = AppState::new(
             1,
@@ -239,7 +267,9 @@ mod tests {
         let db = Arc::new(Db::open(&dir.path().join("test.db")).unwrap());
         db.set_last_synced_block(12).unwrap();
 
-        let settlement = Arc::new(MockSettlement { deposits: test_deposits() });
+        let settlement = Arc::new(MockSettlement {
+            deposits: test_deposits(),
+        });
 
         let (state, _rx) = AppState::new(
             1,

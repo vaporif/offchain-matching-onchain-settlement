@@ -121,11 +121,7 @@ impl<P: Provider + Clone + Send + Sync + 'static> Settlement for EvmSettlement<P
         Ok(Box::pin(stream))
     }
 
-    async fn get_deposits_in_range(
-        &self,
-        from_block: u64,
-        to_block: u64,
-    ) -> Result<Vec<Deposit>> {
+    async fn get_deposits_in_range(&self, from_block: u64, to_block: u64) -> Result<Vec<Deposit>> {
         let filter = Filter::new()
             .address(*self.contract.address())
             .event_signature(Exchange::Deposited::SIGNATURE_HASH)
