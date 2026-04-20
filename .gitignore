@@ -4,3 +4,4 @@ contracts/out/
 contracts/cache/
 contracts/node_modules/
 contracts/lib/
+contracts/foundry.lock
