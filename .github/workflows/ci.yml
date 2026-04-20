@@ -64,6 +64,8 @@ jobs:
         with:
           tool: cargo-nextest
 
+      - uses: foundry-rs/foundry-toolchain@v1
+
       - name: Test
         run: cargo nextest run --workspace
 
@@ -104,6 +106,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest,cargo-llvm-cov
+
+      - uses: foundry-rs/foundry-toolchain@v1
 
       - name: Generate coverage
         run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
