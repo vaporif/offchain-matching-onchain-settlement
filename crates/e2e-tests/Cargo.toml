@@ -9,3 +9,6 @@ publish = false
 tokio = { workspace = true }
 alloy = { workspace = true }
 eyre = { workspace = true }
+gateway = { path = "../gateway" }
+settlement-evm = { path = "../settlement-evm" }
+tempfile = "3"
