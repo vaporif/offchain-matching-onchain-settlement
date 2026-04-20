@@ -4,7 +4,6 @@ out = "out"
 libs = ["node_modules"]
 auto_detect_solc = false
 offline = true
-solc = "solc"
 via_ir = true
 optimizer = true
 optimizer_runs = 200
