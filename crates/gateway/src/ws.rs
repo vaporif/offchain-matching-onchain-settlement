@@ -9,7 +9,6 @@ use axum::{
     },
     response::IntoResponse,
 };
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
@@ -75,7 +74,7 @@ async fn handle_socket(
     registry: Arc<RwLock<WsRegistry>>,
     domain_separator: B256,
 ) {
-    let nonce = B256::from(rand::thread_rng().r#gen::<[u8; 32]>());
+    let nonce = B256::from(rand::random::<[u8; 32]>());
     let challenge = Challenge {
         msg_type: "challenge",
         nonce: format!("0x{}", hex::encode(nonce)),
