@@ -17,9 +17,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-rusqlite = { version = "0.34", features = ["bundled"] }
-settlement-evm = { path = "../settlement-evm" }
+rusqlite = { workspace = true }
+settlement-evm = { workspace = true }
 clap = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
 
 [[bin]]
 name = "gateway"
@@ -27,5 +29,7 @@ path = "src/main.rs"
 
 [dev-dependencies]
 reqwest = { workspace = true }
-tokio-tungstenite = "0.26"
-tempfile = "3"
+tokio-tungstenite = { workspace = true }
+tempfile = { workspace = true }
+futures-util = { workspace = true }
+hex = { workspace = true }

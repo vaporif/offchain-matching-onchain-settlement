@@ -12,6 +12,8 @@ use alloy::{
 use gateway::deposit::DepositService;
 use gateway::persistence::Db;
 use gateway::state::AppState;
+use gateway::ws_registry::WsRegistry;
+use tokio::sync::RwLock;
 
 sol!(
     #[sol(rpc)]
@@ -111,11 +113,13 @@ async fn deposit_sync_replays_historical_and_catches_live() {
     let db_dir = tempfile::TempDir::new().unwrap();
     let db = Arc::new(Db::open(&db_dir.path().join("test.db")).unwrap());
 
-    let (state, _rx) = AppState::new(
+    let ws_registry = Arc::new(RwLock::new(WsRegistry::new()));
+    let state = AppState::new(
         anvil.chain_id(),
         exchange_addr,
         token_addr,
         *quote_token.address(),
+        ws_registry,
     );
 
     let head = ws_provider.get_block_number().await.unwrap();

@@ -19,6 +19,31 @@ sol! {
     }
 }
 
+sol! {
+    #[derive(Debug)]
+    struct AuthMessage {
+        bytes32 nonce;
+        uint256 timestamp;
+    }
+}
+
+pub fn verify_auth(
+    nonce: B256,
+    timestamp: u64,
+    signature: &[u8],
+    domain_separator: B256,
+) -> eyre::Result<Address> {
+    let auth = AuthMessage {
+        nonce,
+        timestamp: U256::from(timestamp),
+    };
+    let struct_hash = auth.eip712_hash_struct();
+    let digest = eip712_digest(domain_separator, struct_hash);
+    let sig = alloy::signers::Signature::try_from(signature)?;
+    let recovered = sig.recover_address_from_prehash(&digest)?;
+    Ok(recovered)
+}
+
 pub fn recover_signer(order: &SignedOrder, domain_separator: B256) -> eyre::Result<Address> {
     let sol_order = to_sol_order(order);
 
@@ -31,7 +56,7 @@ pub fn recover_signer(order: &SignedOrder, domain_separator: B256) -> eyre::Resu
     Ok(recovered)
 }
 
-fn eip712_digest(domain_separator: B256, struct_hash: B256) -> B256 {
+pub fn eip712_digest(domain_separator: B256, struct_hash: B256) -> B256 {
     keccak256(
         [
             &[0x19, 0x01],
@@ -66,7 +91,7 @@ pub fn order_hash(order: &SignedOrder) -> B256 {
     sol_order.eip712_hash_struct()
 }
 
-fn to_sol_order(order: &SignedOrder) -> Order {
+pub fn to_sol_order(order: &SignedOrder) -> Order {
     Order {
         side: match order.side {
             types::Side::Buy => 0,
@@ -121,6 +146,27 @@ mod tests {
         };
 
         let recovered = recover_signer(&signed, domain_separator).unwrap();
+        assert_eq!(recovered, address);
+    }
+
+    #[tokio::test]
+    async fn verify_auth_roundtrip() {
+        let signer = PrivateKeySigner::random();
+        let address = signer.address();
+        let domain_separator = compute_domain_separator(31337, Address::with_last_byte(99));
+
+        let nonce = B256::from(rand::random::<[u8; 32]>());
+        let timestamp = 1_700_000_000_u64;
+
+        let auth = AuthMessage {
+            nonce,
+            timestamp: U256::from(timestamp),
+        };
+        let struct_hash = auth.eip712_hash_struct();
+        let digest = eip712_digest(domain_separator, struct_hash);
+        let sig = signer.sign_hash(&digest).await.unwrap();
+
+        let recovered = verify_auth(nonce, timestamp, &sig.as_bytes(), domain_separator).unwrap();
         assert_eq!(recovered, address);
     }
 }
