@@ -59,6 +59,7 @@
           ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             pkgs.apple-sdk_15
           ];
+        cargoExtraArgs = "--workspace --exclude e2e-tests";
       };
       cargoArtifacts = craneLib.buildDepsOnly commonArgs;
     in {
