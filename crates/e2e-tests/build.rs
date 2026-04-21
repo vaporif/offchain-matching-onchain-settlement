@@ -21,12 +21,16 @@ fn main() {
         contracts_dir.join("package.json").display()
     );
 
-    let status = Command::new("bun")
+    let output = Command::new("bun")
         .args(["install", "--frozen-lockfile"])
         .current_dir(&contracts_dir)
-        .status()
+        .output()
         .expect("bun install failed — is bun installed?");
-    assert!(status.success(), "bun install failed");
+    assert!(
+        output.status.success(),
+        "bun install failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let mut cmd = Command::new("forge");
     cmd.args(["build"]).current_dir(&contracts_dir);
@@ -39,8 +43,12 @@ fn main() {
         }
     }
 
-    let status = cmd
-        .status()
+    let output = cmd
+        .output()
         .expect("forge build failed — is foundry installed?");
-    assert!(status.success(), "forge build failed");
+    assert!(
+        output.status.success(),
+        "forge build failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
