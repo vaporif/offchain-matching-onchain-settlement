@@ -6,12 +6,14 @@ use alloy::primitives::Address;
 use alloy::providers::{Provider, ProviderBuilder};
 use clap::Parser;
 use eyre::Result;
+use tokio::sync::RwLock;
 use tracing::info;
 
 use gateway::build_router;
 use gateway::deposit::DepositService;
 use gateway::persistence::Db;
 use gateway::state::AppState;
+use gateway::ws_registry::WsRegistry;
 
 #[derive(Parser)]
 #[command(name = "gateway")]
@@ -74,11 +76,14 @@ async fn main() -> Result<()> {
         args.contract_address,
     ));
 
-    let (state, _ws_rx) = AppState::new(
+    let ws_registry = Arc::new(RwLock::new(WsRegistry::new()));
+
+    let state = AppState::new(
         args.chain_id,
         args.contract_address,
         args.base_token,
         args.quote_token,
+        ws_registry,
     );
 
     let head = provider.get_block_number().await?;

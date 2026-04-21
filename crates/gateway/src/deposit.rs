@@ -224,11 +224,15 @@ mod tests {
             deposits: test_deposits(),
         });
 
-        let (state, _rx) = AppState::new(
+        let registry = Arc::new(tokio::sync::RwLock::new(
+            crate::ws_registry::WsRegistry::new(),
+        ));
+        let state = AppState::new(
             1,
             Address::ZERO,
             address!("0x2222222222222222222222222222222222222222"),
             address!("0x3333333333333333333333333333333333333333"),
+            registry,
         );
 
         let svc = DepositService::new(settlement, db.clone(), state.clone(), 0);
@@ -248,11 +252,15 @@ mod tests {
             deposits: test_deposits(),
         });
 
-        let (state, _rx) = AppState::new(
+        let registry = Arc::new(tokio::sync::RwLock::new(
+            crate::ws_registry::WsRegistry::new(),
+        ));
+        let state = AppState::new(
             1,
             Address::ZERO,
             address!("0x2222222222222222222222222222222222222222"),
             address!("0x3333333333333333333333333333333333333333"),
+            registry,
         );
 
         let svc = DepositService::new(settlement, db.clone(), state, 0);
@@ -271,11 +279,15 @@ mod tests {
             deposits: test_deposits(),
         });
 
-        let (state, _rx) = AppState::new(
+        let registry = Arc::new(tokio::sync::RwLock::new(
+            crate::ws_registry::WsRegistry::new(),
+        ));
+        let state = AppState::new(
             1,
             Address::ZERO,
             address!("0x2222222222222222222222222222222222222222"),
             address!("0x3333333333333333333333333333333333333333"),
+            registry,
         );
 
         let svc = DepositService::new(settlement, db.clone(), state.clone(), 0);
@@ -294,11 +306,15 @@ mod tests {
         let db = Arc::new(Db::open(&dir.path().join("test.db")).unwrap());
         let settlement = Arc::new(MockSettlement { deposits: vec![] });
 
-        let (state, _rx) = AppState::new(
+        let registry = Arc::new(tokio::sync::RwLock::new(
+            crate::ws_registry::WsRegistry::new(),
+        ));
+        let state = AppState::new(
             1,
             Address::ZERO,
             address!("0x2222222222222222222222222222222222222222"),
             address!("0x3333333333333333333333333333333333333333"),
+            registry,
         );
 
         let svc = DepositService::new(settlement, db.clone(), state, 0);

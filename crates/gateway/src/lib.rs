@@ -6,6 +6,7 @@ pub mod persistence;
 pub mod routes;
 pub mod state;
 pub mod ws;
+pub mod ws_registry;
 
 use axum::{
     Router,
