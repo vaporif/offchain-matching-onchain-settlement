@@ -44,6 +44,22 @@ impl MatchingEngine {
         quantity: U256,
         order_type: OrderType,
     ) -> MatchResult {
+        // Market orders are all-or-nothing: reject upfront if insufficient liquidity
+        // to avoid partially consuming the book then discarding fills.
+        if order_type == OrderType::Market {
+            let available = match side {
+                Side::Buy => self.book.total_ask_qty(),
+                Side::Sell => self.book.total_bid_qty(),
+            };
+            if available < quantity {
+                return MatchResult {
+                    fills: vec![],
+                    resting_qty: U256::ZERO,
+                    resting: false,
+                };
+            }
+        }
+
         let id = self.next_id;
         self.next_id += 1;
 
@@ -114,15 +130,6 @@ impl MatchingEngine {
         if resting {
             order.quantity = remaining;
             self.book.insert(order);
-        }
-
-        // market orders are all-or-nothing
-        if order_type == OrderType::Market && remaining > U256::ZERO {
-            return MatchResult {
-                fills: vec![],
-                resting_qty: U256::ZERO,
-                resting: false,
-            };
         }
 
         MatchResult {
@@ -253,6 +260,23 @@ mod tests {
 
         let result = engine.submit(Side::Buy, U256::ZERO, U256::from(10), OrderType::Market);
         assert!(result.fills.is_empty());
+    }
+
+    #[test]
+    fn market_order_does_not_corrupt_book_on_insufficient_liquidity() {
+        let mut engine = MatchingEngine::new();
+        engine.submit(Side::Sell, U256::from(100), U256::from(3), OrderType::Limit);
+        let maker_id = engine.last_order_id();
+
+        let result = engine.submit(Side::Buy, U256::ZERO, U256::from(5), OrderType::Market);
+        assert!(result.fills.is_empty());
+
+        assert_eq!(engine.ask_depth(), 1);
+        assert_eq!(engine.best_ask(), Some(U256::from(100)));
+
+        let result = engine.submit(Side::Buy, U256::from(100), U256::from(3), OrderType::Limit);
+        assert_eq!(result.fills.len(), 1);
+        assert_eq!(result.fills[0].maker_id, maker_id);
     }
 
     #[test]

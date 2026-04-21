@@ -108,6 +108,24 @@ impl OrderBook {
         Some(TakeResult { maker_id, fill_qty })
     }
 
+    #[must_use]
+    pub fn total_ask_qty(&self) -> U256 {
+        self.asks
+            .values()
+            .flatten()
+            .map(|o| o.quantity)
+            .fold(U256::ZERO, |acc, q| acc + q)
+    }
+
+    #[must_use]
+    pub fn total_bid_qty(&self) -> U256 {
+        self.bids
+            .values()
+            .flatten()
+            .map(|o| o.quantity)
+            .fold(U256::ZERO, |acc, q| acc + q)
+    }
+
     pub fn bid_depth(&self) -> usize {
         self.bids.values().map(VecDeque::len).sum()
     }

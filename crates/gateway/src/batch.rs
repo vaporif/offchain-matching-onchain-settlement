@@ -27,17 +27,10 @@ pub async fn batch_loop<S: Settlement>(state: Arc<Mutex<AppState>>, settlement: 
         let trade_count = trades.len();
         let batch = BatchSettlement { trades };
 
+        // TODO: notify connected clients via WsRegistry when batch settles
         match settlement.submit_batch(batch).await {
             Ok(tx_hash) => {
                 info!(%tx_hash, trade_count, "batch settled on-chain");
-                let state = state.lock().await;
-                let _ = state.ws_tx.send(crate::state::WsMessage {
-                    msg_type: "batch_settled".into(),
-                    data: serde_json::json!({
-                        "tx_hash": format!("{tx_hash}"),
-                        "trade_count": trade_count,
-                    }),
-                });
             }
             Err(e) => {
                 error!(%e, "batch settlement failed");

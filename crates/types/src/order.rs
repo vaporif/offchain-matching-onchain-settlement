@@ -33,8 +33,10 @@ pub struct SignedOrder {
     pub signature: Bytes,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
 pub enum OrderType {
+    #[default]
     Limit,
     Market,
 }
@@ -62,5 +64,25 @@ mod tests {
         };
         assert_eq!(order.id, 42);
         assert_eq!(order.side, Side::Sell);
+    }
+
+    #[test]
+    fn order_type_serde_roundtrip() {
+        let market = OrderType::Market;
+        let json = serde_json::to_string(&market).unwrap();
+        assert_eq!(json, r#""market""#);
+        let parsed: OrderType = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, market);
+
+        let limit = OrderType::Limit;
+        let json = serde_json::to_string(&limit).unwrap();
+        assert_eq!(json, r#""limit""#);
+        let parsed: OrderType = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, limit);
+    }
+
+    #[test]
+    fn order_type_default_is_limit() {
+        assert_eq!(OrderType::default(), OrderType::Limit);
     }
 }
