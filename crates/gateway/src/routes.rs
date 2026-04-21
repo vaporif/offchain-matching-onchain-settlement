@@ -82,12 +82,27 @@ pub struct BookResponse {
     pub asks: Vec<BookLevel>,
 }
 
-pub async fn get_orderbook(State(_state): State<SharedState>) -> impl IntoResponse {
-    let resp = BookResponse {
-        bids: vec![],
-        asks: vec![],
-    };
-    Json(serde_json::to_value(resp).expect("BookResponse serializes"))
+pub async fn get_orderbook(State(state): State<SharedState>) -> impl IntoResponse {
+    let state = state.lock().await;
+    let bids = state
+        .engine
+        .bid_levels(50)
+        .into_iter()
+        .map(|(price, qty)| BookLevel {
+            price: price.to_string(),
+            quantity: qty.to_string(),
+        })
+        .collect();
+    let asks = state
+        .engine
+        .ask_levels(50)
+        .into_iter()
+        .map(|(price, qty)| BookLevel {
+            price: price.to_string(),
+            quantity: qty.to_string(),
+        })
+        .collect();
+    Json(serde_json::to_value(BookResponse { bids, asks }).expect("BookResponse serializes"))
 }
 
 pub async fn get_balances(
