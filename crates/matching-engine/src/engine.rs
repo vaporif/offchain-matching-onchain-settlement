@@ -162,6 +162,14 @@ impl MatchingEngine {
     pub fn last_order_id(&self) -> OrderId {
         self.next_id - 1
     }
+
+    pub fn bid_levels(&self, limit: usize) -> Vec<(U256, U256)> {
+        self.book.bid_levels(limit)
+    }
+
+    pub fn ask_levels(&self, limit: usize) -> Vec<(U256, U256)> {
+        self.book.ask_levels(limit)
+    }
 }
 
 #[cfg(test)]

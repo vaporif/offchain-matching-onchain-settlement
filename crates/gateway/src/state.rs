@@ -120,6 +120,7 @@ impl AppState {
         let mut client_fills = Vec::with_capacity(result.fills.len());
         let mut dispatches = Vec::with_capacity(result.fills.len() * 2);
         let mut remaining = order.quantity;
+        let e18 = U256::from(10).pow(U256::from(18));
 
         for engine_fill in &result.fills {
             remaining -= engine_fill.quantity;
@@ -138,6 +139,34 @@ impl AppState {
                 timestamp: now,
             };
             self.pending_trades.push(trade);
+
+            let base_amount = engine_fill.quantity;
+            let quote_amount = (base_amount * engine_fill.price) / e18;
+
+            let (seller, buyer) = match order.side {
+                Side::Buy => (maker_signed.maker, order.maker),
+                Side::Sell => (order.maker, maker_signed.maker),
+            };
+
+            self.ledger.settle_fill(
+                seller,
+                buyer,
+                self.base_token,
+                self.quote_token,
+                base_amount,
+                quote_amount,
+            );
+
+            // Buy taker reserved collateral at their limit price, but the fill
+            // executes at the maker's (lower) price. Release the difference.
+            if order.side == Side::Buy && engine_fill.price < order.price {
+                let surplus =
+                    (base_amount * (order.price - engine_fill.price)) / e18;
+                if surplus > U256::ZERO {
+                    self.ledger
+                        .release(order.maker, self.quote_token, surplus);
+                }
+            }
 
             let maker_fill = Fill {
                 order_id: engine_fill.maker_id,
@@ -214,6 +243,24 @@ mod tests {
             .into_inner()
     }
 
+    async fn sign_order(
+        order: &SignedOrder,
+        signer: &PrivateKeySigner,
+        domain: B256,
+    ) -> SignedOrder {
+        use alloy::sol_types::SolStruct;
+        let sol_order = crate::eip712::to_sol_order(order);
+        let struct_hash = sol_order.eip712_hash_struct();
+        let digest = alloy::primitives::keccak256(
+            [&[0x19, 0x01], domain.as_slice(), struct_hash.as_slice()].concat(),
+        );
+        let sig = signer.sign_hash(&digest).await.unwrap();
+        SignedOrder {
+            signature: sig.as_bytes().to_vec().into(),
+            ..order.clone()
+        }
+    }
+
     async fn make_signed_order(price: U256, quantity: U256, side: Side) -> (SignedOrder, AppState) {
         let signer = PrivateKeySigner::random();
         let address = signer.address();
@@ -238,22 +285,7 @@ mod tests {
             signature: Bytes::new(),
         };
 
-        let sol_order = crate::eip712::to_sol_order(&order);
-        use alloy::sol_types::SolStruct;
-        let struct_hash = sol_order.eip712_hash_struct();
-        let digest = alloy::primitives::keccak256(
-            [
-                &[0x19, 0x01],
-                state.domain_separator.as_slice(),
-                struct_hash.as_slice(),
-            ]
-            .concat(),
-        );
-        let sig = signer.sign_hash(&digest).await.unwrap();
-        let signed = SignedOrder {
-            signature: sig.as_bytes().to_vec().into(),
-            ..order
-        };
+        let signed = sign_order(&order, &signer, state.domain_separator).await;
 
         (signed, state)
     }
@@ -298,24 +330,6 @@ mod tests {
             .ledger
             .credit(signer_taker.address(), state.quote_token, fund_amount);
 
-        async fn sign_order(
-            order: &SignedOrder,
-            signer: &PrivateKeySigner,
-            domain: B256,
-        ) -> SignedOrder {
-            use alloy::sol_types::SolStruct;
-            let sol_order = crate::eip712::to_sol_order(order);
-            let struct_hash = sol_order.eip712_hash_struct();
-            let digest = alloy::primitives::keccak256(
-                [&[0x19, 0x01], domain.as_slice(), struct_hash.as_slice()].concat(),
-            );
-            let sig = signer.sign_hash(&digest).await.unwrap();
-            SignedOrder {
-                signature: sig.as_bytes().to_vec().into(),
-                ..order.clone()
-            }
-        }
-
         let sell = SignedOrder {
             side: Side::Sell,
             maker: signer_maker.address(),
@@ -347,5 +361,166 @@ mod tests {
         assert_eq!(fills.len(), 1);
         assert_eq!(fills[0].filled_qty, U256::from(5));
         assert_eq!(fills[0].price, U256::from(100));
+    }
+
+    #[tokio::test]
+    async fn settle_fill_transfers_balances_on_match() {
+        let signer_maker = PrivateKeySigner::random();
+        let signer_taker = PrivateKeySigner::random();
+        let mut state = setup_state();
+
+        let e18 = U256::from(10).pow(U256::from(18));
+        let fund = U256::from(1000) * e18;
+        state
+            .ledger
+            .credit(signer_maker.address(), state.base_token, fund);
+        state
+            .ledger
+            .credit(signer_taker.address(), state.quote_token, fund);
+
+        let price = U256::from(2) * e18;
+        let quantity = U256::from(10) * e18;
+
+        let sell = SignedOrder {
+            side: Side::Sell,
+            maker: signer_maker.address(),
+            base_token: state.base_token,
+            quote_token: state.quote_token,
+            price,
+            quantity,
+            nonce: U256::from(1),
+            expiry: U256::from(u64::MAX),
+            signature: Bytes::new(),
+        };
+        let sell_signed = sign_order(&sell, &signer_maker, state.domain_separator).await;
+        state.submit_order(sell_signed, OrderType::Limit).unwrap();
+
+        let buy = SignedOrder {
+            side: Side::Buy,
+            maker: signer_taker.address(),
+            base_token: state.base_token,
+            quote_token: state.quote_token,
+            price,
+            quantity,
+            nonce: U256::from(2),
+            expiry: U256::from(u64::MAX),
+            signature: Bytes::new(),
+        };
+        let buy_signed = sign_order(&buy, &signer_taker, state.domain_separator).await;
+        let (_, fills, _) = state.submit_order(buy_signed, OrderType::Limit).unwrap();
+
+        assert_eq!(fills.len(), 1);
+
+        let expected_quote = (quantity * price) / e18;
+
+        // Maker sold base, received quote
+        assert_eq!(
+            state
+                .ledger
+                .available(signer_maker.address(), state.base_token),
+            fund - quantity
+        );
+        assert_eq!(
+            state
+                .ledger
+                .available(signer_maker.address(), state.quote_token),
+            expected_quote
+        );
+
+        // Taker bought base, paid quote
+        assert_eq!(
+            state
+                .ledger
+                .available(signer_taker.address(), state.base_token),
+            quantity
+        );
+        assert_eq!(
+            state
+                .ledger
+                .available(signer_taker.address(), state.quote_token),
+            fund - expected_quote
+        );
+
+        // No reserved balance lingering
+        assert_eq!(
+            state
+                .ledger
+                .total(signer_maker.address(), state.base_token),
+            fund - quantity
+        );
+        assert_eq!(
+            state
+                .ledger
+                .total(signer_taker.address(), state.quote_token),
+            fund - expected_quote
+        );
+    }
+
+    #[tokio::test]
+    async fn price_improvement_releases_surplus() {
+        let signer_maker = PrivateKeySigner::random();
+        let signer_taker = PrivateKeySigner::random();
+        let mut state = setup_state();
+
+        let e18 = U256::from(10).pow(U256::from(18));
+        let fund = U256::from(1000) * e18;
+        state
+            .ledger
+            .credit(signer_maker.address(), state.base_token, fund);
+        state
+            .ledger
+            .credit(signer_taker.address(), state.quote_token, fund);
+
+        let maker_price = U256::from(2) * e18;
+        let taker_price = U256::from(3) * e18;
+        let quantity = U256::from(10) * e18;
+
+        let sell = SignedOrder {
+            side: Side::Sell,
+            maker: signer_maker.address(),
+            base_token: state.base_token,
+            quote_token: state.quote_token,
+            price: maker_price,
+            quantity,
+            nonce: U256::from(1),
+            expiry: U256::from(u64::MAX),
+            signature: Bytes::new(),
+        };
+        let sell_signed = sign_order(&sell, &signer_maker, state.domain_separator).await;
+        state.submit_order(sell_signed, OrderType::Limit).unwrap();
+
+        let buy = SignedOrder {
+            side: Side::Buy,
+            maker: signer_taker.address(),
+            base_token: state.base_token,
+            quote_token: state.quote_token,
+            price: taker_price,
+            quantity,
+            nonce: U256::from(2),
+            expiry: U256::from(u64::MAX),
+            signature: Bytes::new(),
+        };
+        let buy_signed = sign_order(&buy, &signer_taker, state.domain_separator).await;
+        let (_, fills, _) = state.submit_order(buy_signed, OrderType::Limit).unwrap();
+
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].price, maker_price);
+
+        let actual_cost = (quantity * maker_price) / e18;
+
+        // Taker's quote: fund - actual_cost (surplus released)
+        assert_eq!(
+            state
+                .ledger
+                .available(signer_taker.address(), state.quote_token),
+            fund - actual_cost
+        );
+        // No quote stuck in reserved
+        assert_eq!(
+            state
+                .ledger
+                .total(signer_taker.address(), state.quote_token),
+            fund - actual_cost
+        );
     }
 }

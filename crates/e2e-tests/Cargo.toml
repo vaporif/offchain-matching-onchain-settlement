@@ -5,10 +5,17 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
-[dev-dependencies]
+[dependencies]
 tokio = { workspace = true }
 alloy = { workspace = true }
 eyre = { workspace = true }
 gateway = { path = "../gateway" }
 settlement-evm = { path = "../settlement-evm" }
+types = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+axum = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
 tempfile = "3"

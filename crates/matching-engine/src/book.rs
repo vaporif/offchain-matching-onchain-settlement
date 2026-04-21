@@ -133,6 +133,39 @@ impl OrderBook {
     pub fn ask_depth(&self) -> usize {
         self.asks.values().map(VecDeque::len).sum()
     }
+
+    /// Aggregated bid levels, highest price first.
+    #[must_use]
+    pub fn bid_levels(&self, limit: usize) -> Vec<(U256, U256)> {
+        self.bids
+            .iter()
+            .rev()
+            .take(limit)
+            .map(|(price, queue)| {
+                let qty = queue
+                    .iter()
+                    .map(|o| o.quantity)
+                    .fold(U256::ZERO, |acc, q| acc + q);
+                (*price, qty)
+            })
+            .collect()
+    }
+
+    /// Aggregated ask levels, lowest price first.
+    #[must_use]
+    pub fn ask_levels(&self, limit: usize) -> Vec<(U256, U256)> {
+        self.asks
+            .iter()
+            .take(limit)
+            .map(|(price, queue)| {
+                let qty = queue
+                    .iter()
+                    .map(|o| o.quantity)
+                    .fold(U256::ZERO, |acc, q| acc + q);
+                (*price, qty)
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -214,5 +247,51 @@ mod tests {
         let queue = book.asks.get(&U256::from(200)).expect("level exists");
         assert_eq!(queue[0].id, 1);
         assert_eq!(queue[1].id, 2);
+    }
+
+    #[test]
+    fn bid_levels_returns_highest_first() {
+        let mut book = OrderBook::new();
+        book.insert(make_order(1, Side::Buy, 100, 10));
+        book.insert(make_order(2, Side::Buy, 200, 5));
+        book.insert(make_order(3, Side::Buy, 100, 3)); // same price as order 1
+
+        let levels = book.bid_levels(10);
+        assert_eq!(levels.len(), 2);
+        assert_eq!(levels[0], (U256::from(200), U256::from(5)));
+        assert_eq!(levels[1], (U256::from(100), U256::from(13)));
+    }
+
+    #[test]
+    fn ask_levels_returns_lowest_first() {
+        let mut book = OrderBook::new();
+        book.insert(make_order(1, Side::Sell, 300, 7));
+        book.insert(make_order(2, Side::Sell, 200, 4));
+        book.insert(make_order(3, Side::Sell, 200, 6)); // same price as order 2
+
+        let levels = book.ask_levels(10);
+        assert_eq!(levels.len(), 2);
+        assert_eq!(levels[0], (U256::from(200), U256::from(10)));
+        assert_eq!(levels[1], (U256::from(300), U256::from(7)));
+    }
+
+    #[test]
+    fn levels_respects_limit() {
+        let mut book = OrderBook::new();
+        book.insert(make_order(1, Side::Buy, 100, 10));
+        book.insert(make_order(2, Side::Buy, 200, 5));
+        book.insert(make_order(3, Side::Buy, 300, 1));
+
+        let levels = book.bid_levels(2);
+        assert_eq!(levels.len(), 2);
+        assert_eq!(levels[0].0, U256::from(300));
+        assert_eq!(levels[1].0, U256::from(200));
+    }
+
+    #[test]
+    fn levels_empty_book() {
+        let book = OrderBook::new();
+        assert!(book.bid_levels(10).is_empty());
+        assert!(book.ask_levels(10).is_empty());
     }
 }
