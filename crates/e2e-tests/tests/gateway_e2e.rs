@@ -32,9 +32,7 @@ async fn full_trade_lifecycle() {
         .await
         .unwrap();
 
-    // Mint is permissionless on MockERC20, so maker/taker can mint for themselves.
-    // Avoiding key 0 here prevents nonce conflicts with the operator provider
-    // used by the batch settlement loop.
+    // Avoid key 0 — batch_loop uses the operator provider and would hit nonce conflicts.
     let base_as_maker = MockERC20::new(env.base_token, &maker_provider);
     base_as_maker
         .mint(maker.address(), deposit_base)
@@ -130,10 +128,8 @@ async fn full_trade_lifecycle() {
     let fills = body["fills"].as_array().unwrap();
     assert_eq!(fills.len(), 1);
 
-    // Wait for batch settlement (batch_timeout_secs=1, plus time for the tx)
     tokio::time::sleep(Duration::from_secs(4)).await;
 
-    // Reuse maker_provider for read-only balance queries (no tx sent)
     let exchange = Exchange::new(env.exchange_addr, &maker_provider);
     let quote_amount = (quantity * price) / U256::from(E18);
 
