@@ -23,6 +23,7 @@ pub struct Deposit {
     pub user: Address,
     pub token: Address,
     pub amount: U256,
+    pub block_number: u64,
 }
 
 #[cfg(test)]

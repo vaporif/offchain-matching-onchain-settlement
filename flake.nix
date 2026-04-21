@@ -59,6 +59,7 @@
           ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             pkgs.apple-sdk_15
           ];
+        cargoExtraArgs = "--workspace --exclude e2e-tests";
       };
       cargoArtifacts = craneLib.buildDepsOnly commonArgs;
     in {
@@ -97,6 +98,8 @@
             pkgs.typos
             pkgs.cargo-nextest
             pkgs.foundry
+            pkgs.bun
+            pkgs.solc
           ]
           ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             pkgs.apple-sdk_15
@@ -117,6 +120,8 @@
             pkgs.typos
             pkgs.cargo-nextest
             pkgs.foundry
+            pkgs.bun
+            pkgs.solc
           ]
           ++ (with pkgs.sp1."v6.1.0"; [
             cargo-prove

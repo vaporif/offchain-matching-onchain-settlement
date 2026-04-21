@@ -18,12 +18,17 @@ pub trait Settlement: Send + Sync {
     fn subscribe_deposits(
         &self,
     ) -> impl Future<Output = Result<Pin<Box<dyn Stream<Item = Deposit> + Send>>>> + Send;
+
+    fn get_deposits_in_range(
+        &self,
+        from_block: u64,
+        to_block: u64,
+    ) -> impl Future<Output = Result<Vec<Deposit>>> + Send;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::future::Future;
 
     struct MockSettlement;
 
@@ -50,6 +55,14 @@ mod tests {
             async {
                 Ok(Box::pin(tokio_stream::empty()) as Pin<Box<dyn Stream<Item = Deposit> + Send>>)
             }
+        }
+
+        fn get_deposits_in_range(
+            &self,
+            _from_block: u64,
+            _to_block: u64,
+        ) -> impl Future<Output = Result<Vec<Deposit>>> + Send {
+            async { Ok(vec![]) }
         }
     }
 
