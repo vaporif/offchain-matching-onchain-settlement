@@ -160,11 +160,9 @@ impl AppState {
             // Buy taker reserved collateral at their limit price, but the fill
             // executes at the maker's (lower) price. Release the difference.
             if order.side == Side::Buy && engine_fill.price < order.price {
-                let surplus =
-                    (base_amount * (order.price - engine_fill.price)) / e18;
+                let surplus = (base_amount * (order.price - engine_fill.price)) / e18;
                 if surplus > U256::ZERO {
-                    self.ledger
-                        .release(order.maker, self.quote_token, surplus);
+                    self.ledger.release(order.maker, self.quote_token, surplus);
                 }
             }
 
@@ -443,9 +441,7 @@ mod tests {
 
         // No reserved balance lingering
         assert_eq!(
-            state
-                .ledger
-                .total(signer_maker.address(), state.base_token),
+            state.ledger.total(signer_maker.address(), state.base_token),
             fund - quantity
         );
         assert_eq!(

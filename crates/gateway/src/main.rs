@@ -131,7 +131,10 @@ async fn main() -> Result<()> {
         }
     });
 
-    tokio::spawn(gateway::batch::batch_loop(state.clone(), settlement.clone()));
+    tokio::spawn(gateway::batch::batch_loop(
+        state.clone(),
+        settlement.clone(),
+    ));
 
     let router = build_router(state);
     let listener = tokio::net::TcpListener::bind(&args.listen).await?;
