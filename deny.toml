@@ -26,47 +26,6 @@ allow = [
 ]
 confidence-threshold = 0.8
 
-# Workspace crates don't need licenses for internal use
-[[licenses.clarify]]
-name = "cli"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "gateway"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "matching-engine"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "settlement-core"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "settlement-evm"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "types"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "e2e-tests"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "persistence"
-expression = "MIT"
-license-files = []
-
 [bans]
 multiple-versions = "warn"
 wildcards = "allow"
