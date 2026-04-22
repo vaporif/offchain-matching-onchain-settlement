@@ -2,6 +2,8 @@
 ignore = [
     # paste crate unmaintained - transitive dependency, no direct replacement available yet
     "RUSTSEC-2024-0436",
+    # bincode v1 unmaintained - intentional choice, v2 has incompatible API
+    "RUSTSEC-2025-0141",
 ]
 
 [licenses]
@@ -57,6 +59,11 @@ license-files = []
 
 [[licenses.clarify]]
 name = "e2e-tests"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+name = "persistence"
 expression = "MIT"
 license-files = []
 
