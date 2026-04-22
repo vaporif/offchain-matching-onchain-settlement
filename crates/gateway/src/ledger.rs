@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use alloy::primitives::{Address, U256};
+use persistence::BalanceRow;
 
 #[derive(Debug, Default)]
 struct TokenBalance {
@@ -77,6 +78,33 @@ impl Ledger {
         let bal = self.entry(user, token);
         bal.available = amount;
         bal.reserved = U256::ZERO;
+    }
+
+    pub fn from_balances(balances: HashMap<Address, HashMap<Address, BalanceRow>>) -> Self {
+        let mut ledger = Self::new();
+        for (user, tokens) in balances {
+            for (token, row) in tokens {
+                let entry = ledger
+                    .balances
+                    .entry(user)
+                    .or_default()
+                    .entry(token)
+                    .or_default();
+                entry.available = row.available;
+                entry.reserved = row.reserved;
+            }
+        }
+        ledger
+    }
+
+    pub fn snapshot(&self) -> Vec<(Address, Address, U256, U256)> {
+        let mut result = Vec::new();
+        for (user, tokens) in &self.balances {
+            for (token, balance) in tokens {
+                result.push((*user, *token, balance.available, balance.reserved));
+            }
+        }
+        result
     }
 
     fn entry(&mut self, user: Address, token: Address) -> &mut TokenBalance {

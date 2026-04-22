@@ -2,7 +2,6 @@ pub mod batch;
 pub mod deposit;
 pub mod eip712;
 pub mod ledger;
-pub mod persistence;
 pub mod routes;
 pub mod state;
 pub mod ws;

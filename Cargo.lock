@@ -1254,6 +1254,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230c5f1ca6a325a32553f8640d31ac9b49f2411e901e427570154868b46da4f7"
 
 [[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1831,6 +1840,7 @@ dependencies = [
  "axum",
  "eyre",
  "gateway",
+ "persistence",
  "reqwest",
  "serde_json",
  "settlement-evm",
@@ -2158,14 +2168,15 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "axum",
+ "bincode",
  "clap",
  "eyre",
  "futures-util",
  "hex",
  "matching-engine",
+ "persistence",
  "rand 0.10.1",
  "reqwest",
- "rusqlite",
  "serde",
  "serde_json",
  "settlement-core",
@@ -3138,6 +3149,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "persistence"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "bincode",
+ "eyre",
+ "rusqlite",
+ "tempfile",
+ "tracing",
+ "types",
+]
+
+[[package]]
 name = "pest"
 version = "2.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3788,9 +3812,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.12"
+version = "0.103.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8279bb85272c9f10811ae6a6c547ff594d6a7f3c6c6b02ee9726d1d0dcfcdd06"
+checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
 dependencies = [
  "aws-lc-rs",
  "ring",

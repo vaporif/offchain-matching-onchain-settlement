@@ -170,6 +170,15 @@ impl MatchingEngine {
     pub fn ask_levels(&self, limit: usize) -> Vec<(U256, U256)> {
         self.book.ask_levels(limit)
     }
+
+    pub fn set_next_id(&mut self, id: u64) {
+        self.next_id = id;
+    }
+
+    /// Returns true if the order is still resting on the book.
+    pub fn has_order(&self, id: OrderId) -> bool {
+        self.book.has_order(id)
+    }
 }
 
 #[cfg(test)]

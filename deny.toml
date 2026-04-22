@@ -2,6 +2,8 @@
 ignore = [
     # paste crate unmaintained - transitive dependency, no direct replacement available yet
     "RUSTSEC-2024-0436",
+    # bincode v1 unmaintained - intentional choice, v2 has incompatible API
+    "RUSTSEC-2025-0141",
 ]
 
 [licenses]
@@ -23,42 +25,6 @@ allow = [
     "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
-
-# Workspace crates don't need licenses for internal use
-[[licenses.clarify]]
-name = "cli"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "gateway"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "matching-engine"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "settlement-core"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "settlement-evm"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "types"
-expression = "MIT"
-license-files = []
-
-[[licenses.clarify]]
-name = "e2e-tests"
-expression = "MIT"
-license-files = []
 
 [bans]
 multiple-versions = "warn"

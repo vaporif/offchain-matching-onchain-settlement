@@ -2,6 +2,7 @@
 name = "gateway"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 types = { workspace = true }
@@ -17,7 +18,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-rusqlite = { workspace = true }
+persistence = { workspace = true }
+bincode = { workspace = true }
 settlement-evm = { workspace = true }
 clap = { workspace = true }
 rand = { workspace = true }

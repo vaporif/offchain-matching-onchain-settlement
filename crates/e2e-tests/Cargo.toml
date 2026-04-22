@@ -11,11 +11,12 @@ alloy = { workspace = true }
 eyre = { workspace = true }
 gateway = { path = "../gateway" }
 settlement-evm = { path = "../settlement-evm" }
+persistence = { workspace = true }
 types = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
 axum = { workspace = true }
+tempfile = { workspace = true }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
-tempfile = "3"
