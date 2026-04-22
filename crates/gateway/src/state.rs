@@ -7,6 +7,7 @@ use std::{
 use alloy::primitives::{Address, B256, U256};
 use eyre::{Result, bail};
 use matching_engine::MatchingEngine;
+use persistence::Db;
 use tokio::sync::{Mutex, RwLock};
 use types::{Fill, OrderId, OrderType, Side, SignedOrder, Trade};
 
@@ -34,13 +35,15 @@ pub struct AppState {
     pub ledger: Ledger,
     pub accepted_nonces: HashSet<B256>,
     pub order_map: HashMap<OrderId, SignedOrder>,
-    pub pending_trades: Vec<Trade>,
+    pub pending_trades: Vec<(i64, Trade)>,
     pub domain_separator: B256,
     pub base_token: Address,
     pub quote_token: Address,
     pub ws_registry: Arc<RwLock<WsRegistry>>,
     pub batch_size: usize,
     pub batch_timeout_secs: u64,
+    pub db: Arc<Db>,
+    pub nonce_expiry_secs: u64,
 }
 
 impl AppState {
@@ -50,6 +53,7 @@ impl AppState {
         base_token: Address,
         quote_token: Address,
         ws_registry: Arc<RwLock<WsRegistry>>,
+        db: Arc<Db>,
     ) -> Arc<Mutex<Self>> {
         let state = Self {
             engine: MatchingEngine::new(),
@@ -63,6 +67,8 @@ impl AppState {
             ws_registry,
             batch_size: 10,
             batch_timeout_secs: 5,
+            db,
+            nonce_expiry_secs: 86400,
         };
         Arc::new(Mutex::new(state))
     }
@@ -119,6 +125,7 @@ impl AppState {
 
         let mut client_fills = Vec::with_capacity(result.fills.len());
         let mut dispatches = Vec::with_capacity(result.fills.len() * 2);
+        let mut trades = Vec::with_capacity(result.fills.len());
         let mut remaining = order.quantity;
         let e18 = U256::from(10).pow(U256::from(18));
 
@@ -138,7 +145,7 @@ impl AppState {
                 quantity: engine_fill.quantity,
                 timestamp: now,
             };
-            self.pending_trades.push(trade);
+            trades.push(trade);
 
             let base_amount = engine_fill.quantity;
             let quote_amount = (base_amount * engine_fill.price) / e18;
@@ -201,13 +208,47 @@ impl AppState {
         }
 
         if result.resting {
-            self.order_map.insert(order_id, order);
+            self.order_map.insert(order_id, order.clone());
+        }
+
+        // Persist atomically: nonce, trades, balances, filled makers, resting order
+        let balance_updates = self.ledger.snapshot();
+        let filled_maker_ids: Vec<u64> = result
+            .fills
+            .iter()
+            .map(|f| f.maker_id)
+            .filter(|id| !self.engine.has_order(*id))
+            .collect();
+        let resting_order = if result.resting {
+            Some((order_id, order.maker, &order))
+        } else {
+            None
+        };
+        let nonce_expires_at = now + self.nonce_expiry_secs;
+
+        match self.db.save_order_fill(
+            hash,
+            nonce_expires_at,
+            &trades,
+            &balance_updates,
+            &filled_maker_ids,
+            resting_order,
+        ) {
+            Ok(trade_ids) => {
+                for (id, trade) in trade_ids.into_iter().zip(trades) {
+                    self.pending_trades.push((id, trade));
+                }
+            }
+            Err(e) => {
+                tracing::error!(%e, "fatal: failed to persist order fill, exiting");
+                std::process::exit(1);
+            }
         }
 
         Ok((order_id, client_fills, dispatches))
     }
 
-    pub fn drain_batch(&mut self) -> Vec<Trade> {
+    pub fn drain_batch(&mut self) -> Vec<(i64, Trade)> {
         std::mem::take(&mut self.pending_trades)
     }
 }
@@ -224,9 +265,12 @@ mod tests {
     use super::*;
     use alloy::primitives::Bytes;
     use alloy::signers::{Signer, local::PrivateKeySigner};
+    use tempfile::TempDir;
     use types::Side;
 
-    fn setup_state() -> AppState {
+    fn setup_state() -> (TempDir, AppState) {
+        let dir = TempDir::new().expect("create temp dir");
+        let db = Arc::new(Db::open(&dir.path().join("test.db")).expect("open test db"));
         let registry = Arc::new(RwLock::new(crate::ws_registry::WsRegistry::new()));
         let state = AppState::new(
             31337,
@@ -234,11 +278,13 @@ mod tests {
             Address::with_last_byte(1),
             Address::with_last_byte(2),
             registry,
+            db,
         );
-        Arc::try_unwrap(state)
+        let inner = Arc::try_unwrap(state)
             .ok()
             .expect("single Arc reference")
-            .into_inner()
+            .into_inner();
+        (dir, inner)
     }
 
     async fn sign_order(
@@ -259,10 +305,14 @@ mod tests {
         }
     }
 
-    async fn make_signed_order(price: U256, quantity: U256, side: Side) -> (SignedOrder, AppState) {
+    async fn make_signed_order(
+        price: U256,
+        quantity: U256,
+        side: Side,
+    ) -> (SignedOrder, TempDir, AppState) {
         let signer = PrivateKeySigner::random();
         let address = signer.address();
-        let mut state = setup_state();
+        let (_dir, mut state) = setup_state();
 
         let token = match side {
             Side::Buy => state.quote_token,
@@ -285,12 +335,13 @@ mod tests {
 
         let signed = sign_order(&order, &signer, state.domain_separator).await;
 
-        (signed, state)
+        (signed, _dir, state)
     }
 
     #[tokio::test]
     async fn market_order_rejects_zero_price() {
-        let (order, mut state) = make_signed_order(U256::ZERO, U256::from(5), Side::Buy).await;
+        let (order, _dir, mut state) =
+            make_signed_order(U256::ZERO, U256::from(5), Side::Buy).await;
         let result = state.submit_order(order, OrderType::Market);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("price"));
@@ -298,7 +349,7 @@ mod tests {
 
     #[tokio::test]
     async fn market_order_rolls_back_on_no_fill() {
-        let (order, mut state) =
+        let (order, _dir, mut state) =
             make_signed_order(U256::from(1000), U256::from(5), Side::Buy).await;
 
         let hash = crate::eip712::order_hash(&order);
@@ -318,7 +369,7 @@ mod tests {
     async fn market_order_fills_against_resting_limit() {
         let signer_maker = PrivateKeySigner::random();
         let signer_taker = PrivateKeySigner::random();
-        let mut state = setup_state();
+        let (_dir, mut state) = setup_state();
 
         let fund_amount = U256::from(1_000_000) * U256::from(10).pow(U256::from(18));
         state
@@ -365,7 +416,7 @@ mod tests {
     async fn settle_fill_transfers_balances_on_match() {
         let signer_maker = PrivateKeySigner::random();
         let signer_taker = PrivateKeySigner::random();
-        let mut state = setup_state();
+        let (_dir, mut state) = setup_state();
 
         let e18 = U256::from(10).pow(U256::from(18));
         let fund = U256::from(1000) * e18;
@@ -456,7 +507,7 @@ mod tests {
     async fn price_improvement_releases_surplus() {
         let signer_maker = PrivateKeySigner::random();
         let signer_taker = PrivateKeySigner::random();
-        let mut state = setup_state();
+        let (_dir, mut state) = setup_state();
 
         let e18 = U256::from(10).pow(U256::from(18));
         let fund = U256::from(1000) * e18;

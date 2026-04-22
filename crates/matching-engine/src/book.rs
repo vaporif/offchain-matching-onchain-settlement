@@ -151,6 +151,12 @@ impl OrderBook {
             .collect()
     }
 
+    /// Returns true if the given order is still on the book.
+    #[must_use]
+    pub fn has_order(&self, id: OrderId) -> bool {
+        self.locations.contains_key(&id)
+    }
+
     /// Aggregated ask levels, lowest price first.
     #[must_use]
     pub fn ask_levels(&self, limit: usize) -> Vec<(U256, U256)> {

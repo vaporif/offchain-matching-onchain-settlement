@@ -14,6 +14,8 @@ use gateway::{
     state::AppState,
     ws_registry::WsRegistry,
 };
+use persistence::Db;
+use tempfile::TempDir;
 use tokio::sync::RwLock;
 use types::{OrderType, SignedOrder};
 
@@ -33,6 +35,8 @@ pub struct TestEnv {
     // Dropping AnvilInstance kills the child process
     #[allow(dead_code)]
     anvil: AnvilInstance,
+    #[allow(dead_code)]
+    _dir: TempDir,
     pub base_token: Address,
     pub quote_token: Address,
     pub exchange_addr: Address,
@@ -79,6 +83,9 @@ impl TestEnv {
             exchange_addr,
         ));
 
+        let dir = TempDir::new().expect("create temp dir");
+        let db = Arc::new(Db::open(&dir.path().join("test.db")).expect("open test db"));
+
         let ws_registry = Arc::new(RwLock::new(WsRegistry::new()));
         let state = AppState::new(
             chain_id,
@@ -86,6 +93,7 @@ impl TestEnv {
             base_token,
             quote_token,
             ws_registry,
+            db,
         );
 
         {
@@ -108,6 +116,7 @@ impl TestEnv {
 
         Self {
             anvil,
+            _dir: dir,
             base_token,
             quote_token,
             exchange_addr,

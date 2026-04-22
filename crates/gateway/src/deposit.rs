@@ -6,8 +6,8 @@ use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
-use crate::persistence::Db;
 use crate::state::AppState;
+use persistence::Db;
 
 const CHUNK_SIZE: u64 = 2000;
 
@@ -60,24 +60,40 @@ impl<S: Settlement + 'static> DepositService<S> {
                 .await
                 .wrap_err_with(|| format!("fetching deposits for blocks {current}..={end}"))?;
 
-            if !deposits.is_empty() {
+            let balance_saves = if !deposits.is_empty() {
                 let mut state = self.state.lock().await;
                 for deposit in &deposits {
                     state
                         .ledger
                         .credit(deposit.user, deposit.token, deposit.amount);
                 }
+                let saves: Vec<_> = deposits
+                    .iter()
+                    .map(|d| {
+                        let avail = state.ledger.available(d.user, d.token);
+                        let total = state.ledger.total(d.user, d.token);
+                        (d.user, d.token, avail, total - avail)
+                    })
+                    .collect();
                 info!(
                     count = deposits.len(),
                     from = current,
                     to = end,
                     "credited historical deposits"
                 );
-            }
+                saves
+            } else {
+                Vec::new()
+            };
 
             tokio::task::spawn_blocking({
                 let db = self.db.clone();
-                move || db.set_last_synced_block(end)
+                move || {
+                    for &(user, token, avail, reserved) in &balance_saves {
+                        db.save_balance(user, token, avail, reserved)?;
+                    }
+                    db.set_last_synced_block(end)
+                }
             })
             .await??;
 
@@ -112,22 +128,35 @@ impl<S: Settlement + 'static> DepositService<S> {
                     continue;
                 }
 
-                {
+                let balance_save = {
                     let mut state = svc.state.lock().await;
                     state
                         .ledger
                         .credit(deposit.user, deposit.token, deposit.amount);
-                }
 
-                // Only persist when we advance to a new block
-                if deposit.block_number > last_persisted_block {
+                    let avail = state.ledger.available(deposit.user, deposit.token);
+                    let total = state.ledger.total(deposit.user, deposit.token);
+                    (deposit.user, deposit.token, avail, total - avail)
+                };
+
+                let advance_block = deposit.block_number > last_persisted_block;
+                if advance_block {
                     last_persisted_block = deposit.block_number;
-                    tokio::task::spawn_blocking({
-                        let db = svc.db.clone();
-                        move || db.set_last_synced_block(last_persisted_block)
-                    })
-                    .await??;
                 }
+                let persisted_block = last_persisted_block;
+
+                tokio::task::spawn_blocking({
+                    let db = svc.db.clone();
+                    move || {
+                        let (user, token, avail, reserved) = balance_save;
+                        db.save_balance(user, token, avail, reserved)?;
+                        if advance_block {
+                            db.set_last_synced_block(persisted_block)?;
+                        }
+                        Ok::<_, eyre::Report>(())
+                    }
+                })
+                .await??;
 
                 info!(
                     user = %deposit.user,
@@ -233,6 +262,7 @@ mod tests {
             address!("0x2222222222222222222222222222222222222222"),
             address!("0x3333333333333333333333333333333333333333"),
             registry,
+            db.clone(),
         );
 
         let svc = DepositService::new(settlement, db.clone(), state.clone(), 0);
@@ -261,6 +291,7 @@ mod tests {
             address!("0x2222222222222222222222222222222222222222"),
             address!("0x3333333333333333333333333333333333333333"),
             registry,
+            db.clone(),
         );
 
         let svc = DepositService::new(settlement, db.clone(), state, 0);
@@ -288,6 +319,7 @@ mod tests {
             address!("0x2222222222222222222222222222222222222222"),
             address!("0x3333333333333333333333333333333333333333"),
             registry,
+            db.clone(),
         );
 
         let svc = DepositService::new(settlement, db.clone(), state.clone(), 0);
@@ -315,6 +347,7 @@ mod tests {
             address!("0x2222222222222222222222222222222222222222"),
             address!("0x3333333333333333333333333333333333333333"),
             registry,
+            db.clone(),
         );
 
         let svc = DepositService::new(settlement, db.clone(), state, 0);

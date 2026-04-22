@@ -17,7 +17,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-rusqlite = { workspace = true }
+persistence = { workspace = true }
+bincode = { workspace = true }
 settlement-evm = { workspace = true }
 clap = { workspace = true }
 rand = { workspace = true }

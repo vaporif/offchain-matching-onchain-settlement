@@ -10,9 +10,9 @@ use alloy::{
     sol,
 };
 use gateway::deposit::DepositService;
-use gateway::persistence::Db;
 use gateway::state::AppState;
 use gateway::ws_registry::WsRegistry;
+use persistence::Db;
 use tokio::sync::RwLock;
 
 sol!(
@@ -120,6 +120,7 @@ async fn deposit_sync_replays_historical_and_catches_live() {
         token_addr,
         *quote_token.address(),
         ws_registry,
+        db.clone(),
     );
 
     let head = ws_provider.get_block_number().await.unwrap();

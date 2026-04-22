@@ -1,0 +1,28 @@
+[package]
+name = "persistence"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+types = { workspace = true }
+rusqlite = { workspace = true }
+bincode = { workspace = true }
+alloy = { workspace = true }
+eyre = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+missing_const_for_fn = "warn"
+or_fun_call = "warn"
+redundant_pub_crate = "allow"
+significant_drop_tightening = "allow"
+unwrap_used = "warn"
+clone_on_ref_ptr = "warn"
+dbg_macro = "warn"
+undocumented_unsafe_blocks = "warn"

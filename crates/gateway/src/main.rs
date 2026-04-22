@@ -6,12 +6,13 @@ use alloy::primitives::Address;
 use alloy::providers::{Provider, ProviderBuilder};
 use clap::Parser;
 use eyre::Result;
+use persistence::Db;
 use tokio::sync::RwLock;
 use tracing::info;
 
 use gateway::build_router;
 use gateway::deposit::DepositService;
-use gateway::persistence::Db;
+use gateway::ledger::Ledger;
 use gateway::state::AppState;
 use gateway::ws_registry::WsRegistry;
 
@@ -67,7 +68,47 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let db = Arc::new(Db::open(&args.db_path)?);
+    let db = Arc::new(
+        tokio::task::spawn_blocking({
+            let path = args.db_path.clone();
+            move || Db::open(&path)
+        })
+        .await??,
+    );
+
+    // -- Recovery sequence --
+    let (ledger, max_id, pending_trades, unexpired_nonces) = {
+        let db = db.clone();
+        tokio::task::spawn_blocking(move || -> Result<_> {
+            let balances = db.load_all_balances()?;
+            let ledger = Ledger::from_balances(balances);
+
+            let max_id = db.load_max_order_id()?;
+
+            let cancelled = db.cancel_all_resting_orders()?;
+            if cancelled > 0 {
+                info!(count = cancelled, "cancelled stale resting orders");
+            }
+
+            let pending = db.load_pending_trades()?;
+            info!(count = pending.len(), "recovered pending trades");
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before epoch")
+                .as_secs();
+            let pruned = db.prune_expired_nonces(now)?;
+            if pruned > 0 {
+                info!(count = pruned, "pruned expired nonces");
+            }
+
+            let unexpired_nonces = db.load_unexpired_nonces(now)?;
+            info!(count = unexpired_nonces.len(), "recovered unexpired nonces");
+
+            Ok((ledger, max_id, pending, unexpired_nonces))
+        })
+        .await??
+    };
 
     let provider = ProviderBuilder::new().connect(&args.ws_url).await?;
 
@@ -84,7 +125,21 @@ async fn main() -> Result<()> {
         args.base_token,
         args.quote_token,
         ws_registry,
+        db.clone(),
     );
+
+    // Apply recovered state
+    {
+        let mut s = state.lock().await;
+        s.ledger = ledger;
+        if let Some(id) = max_id {
+            s.engine.set_next_id(id + 1);
+        }
+        s.pending_trades = pending_trades;
+        for nonce in unexpired_nonces {
+            s.accepted_nonces.insert(nonce);
+        }
+    }
 
     let head = provider.get_block_number().await?;
     info!(head, "current chain head");
@@ -98,7 +153,7 @@ async fn main() -> Result<()> {
     let live_handle = deposit_svc.clone().sync_and_subscribe(head).await?;
     info!("historical deposit sync complete, starting server");
 
-    // Reconnection wrapper — handle intentionally detached
+    // Reconnection wrapper -- handle intentionally detached
     let _reconnect = tokio::spawn({
         let deposit_svc = deposit_svc.clone();
         let provider = provider.clone();
@@ -126,6 +181,40 @@ async fn main() -> Result<()> {
                     Err(e) => {
                         tracing::error!(error = %e, "failed to re-subscribe");
                     }
+                }
+            }
+        }
+    });
+
+    // Nonce pruning: runs every hour
+    tokio::spawn({
+        let db = db.clone();
+        async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600));
+            interval.tick().await; // skip immediate first tick
+            loop {
+                interval.tick().await;
+                let db = db.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("system clock before epoch")
+                        .as_secs();
+                    db.prune_expired_nonces(now)
+                })
+                .await;
+
+                match result {
+                    Ok(Ok(count)) if count > 0 => {
+                        info!(count, "pruned expired nonces");
+                    }
+                    Ok(Err(e)) => {
+                        tracing::error!(%e, "nonce pruning failed");
+                    }
+                    Err(e) => {
+                        tracing::error!(%e, "nonce pruning task panicked");
+                    }
+                    _ => {}
                 }
             }
         }

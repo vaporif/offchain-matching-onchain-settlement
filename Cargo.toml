@@ -8,6 +8,7 @@ members = [
     "crates/gateway",
     "crates/cli",
     "crates/e2e-tests",
+    "crates/persistence",
 ]
 
 [workspace.package]
@@ -46,6 +47,7 @@ hex = "0.4"
 
 # Storage
 rusqlite = { version = "0.39", features = ["bundled"] }
+bincode = "1"
 
 # Testing
 proptest = "1"
@@ -59,3 +61,4 @@ matching-engine = { path = "crates/matching-engine" }
 settlement-core = { path = "crates/settlement-core" }
 settlement-evm = { path = "crates/settlement-evm" }
 gateway = { path = "crates/gateway" }
+persistence = { path = "crates/persistence" }
