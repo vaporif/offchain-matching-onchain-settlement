@@ -439,6 +439,7 @@ impl Db {
 
     // -- Resting Orders --
 
+    #[allow(clippy::type_complexity)]
     pub fn load_resting_orders(&self) -> Result<Vec<(u64, Vec<u8>, U256, U256)>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
@@ -460,13 +461,10 @@ impl Db {
         for row in rows {
             let (id, blob, nonce_bytes, resting_qty_bytes) = row?;
             let nonce = u256_from_bytes(&nonce_bytes);
-            let resting_qty = resting_qty_bytes
-                .map(|b| u256_from_bytes(&b))
-                .unwrap_or_else(|| {
-                    bincode::deserialize::<SignedOrder>(&blob)
-                        .map(|o| o.quantity)
-                        .unwrap_or(U256::ZERO)
-                });
+            let resting_qty = resting_qty_bytes.map_or_else(
+                || bincode::deserialize::<SignedOrder>(&blob).map_or(U256::ZERO, |o| o.quantity),
+                |b| u256_from_bytes(&b),
+            );
             result.push((id, blob, nonce, resting_qty));
         }
         Ok(result)

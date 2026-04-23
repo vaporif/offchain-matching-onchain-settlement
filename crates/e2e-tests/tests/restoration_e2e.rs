@@ -59,7 +59,12 @@ async fn orders_survive_restart() {
 
     // Create a fresh matching engine and restore
     let mut engine = matching_engine::MatchingEngine::new();
-    engine.restore_order(*restored_id, restored_order.side, restored_order.price, *resting_qty);
+    engine.restore_order(
+        *restored_id,
+        restored_order.side,
+        restored_order.price,
+        *resting_qty,
+    );
     assert!(engine.has_order(*restored_id));
 
     // Verify the restored order is matchable
