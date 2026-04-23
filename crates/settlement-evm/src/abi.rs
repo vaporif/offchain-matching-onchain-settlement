@@ -25,6 +25,7 @@ sol! {
             uint256[] calldata prices
         ) external;
         function balances(address user, address token) external view returns (uint256);
+        function cancelNonce(address maker, uint256 nonce) external;
 
         event Deposited(address indexed user, address indexed token, uint256 amount);
         event Withdrawn(address indexed user, address indexed token, uint256 amount);

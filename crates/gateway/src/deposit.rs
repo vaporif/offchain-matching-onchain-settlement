@@ -218,6 +218,10 @@ mod tests {
                 .cloned()
                 .collect())
         }
+
+        async fn cancel_nonce(&self, _maker: Address, _nonce: U256) -> eyre::Result<()> {
+            Ok(())
+        }
     }
 
     fn test_deposits() -> Vec<Deposit> {

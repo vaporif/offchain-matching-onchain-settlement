@@ -24,6 +24,8 @@ pub trait Settlement: Send + Sync {
         from_block: u64,
         to_block: u64,
     ) -> impl Future<Output = Result<Vec<Deposit>>> + Send;
+
+    fn cancel_nonce(&self, maker: Address, nonce: U256) -> impl Future<Output = Result<()>> + Send;
 }
 
 #[cfg(test)]
@@ -63,6 +65,14 @@ mod tests {
             _to_block: u64,
         ) -> impl Future<Output = Result<Vec<Deposit>>> + Send {
             async { Ok(vec![]) }
+        }
+
+        fn cancel_nonce(
+            &self,
+            _maker: Address,
+            _nonce: U256,
+        ) -> impl Future<Output = Result<()>> + Send {
+            async { Ok(()) }
         }
     }
 

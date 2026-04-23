@@ -140,15 +140,17 @@ impl Db {
     ) -> Result<()> {
         let id = i64::try_from(order_id).expect("order_id exceeds i64::MAX");
         let blob = bincode::serialize(signed_order).wrap_err("serializing signed order")?;
+        let nonce_bytes = u256_to_bytes(signed_order.nonce);
         let now = now_secs();
         let conn = self.lock();
         conn.execute(
-            "INSERT OR REPLACE INTO orders (order_id, maker_address, signed_order, status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR REPLACE INTO orders (order_id, maker_address, signed_order, nonce, status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 id,
                 address_to_bytes(maker).as_slice(),
                 blob,
+                nonce_bytes.as_slice(),
                 status,
                 now,
                 now,
@@ -340,7 +342,7 @@ impl Db {
         trades: &[Trade],
         balance_updates: &[(Address, Address, U256, U256)],
         filled_maker_ids: &[u64],
-        resting_order: Option<(u64, Address, &SignedOrder)>,
+        resting_order: Option<(u64, Address, &SignedOrder, U256)>,
     ) -> Result<Vec<i64>> {
         let conn = self.lock();
 
@@ -396,17 +398,21 @@ impl Db {
             }
 
             // 5. Optional resting order
-            if let Some((order_id, maker, signed_order)) = resting_order {
+            if let Some((order_id, maker, signed_order, resting_qty)) = resting_order {
                 let id = i64::try_from(order_id).expect("resting order_id exceeds i64::MAX");
                 let blob =
                     bincode::serialize(signed_order).wrap_err("serializing resting order")?;
+                let nonce_bytes = u256_to_bytes(signed_order.nonce);
+                let resting_qty_bytes = u256_to_bytes(resting_qty);
                 conn.execute(
-                    "INSERT OR REPLACE INTO orders (order_id, maker_address, signed_order, status, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, 'resting', ?4, ?5)",
+                    "INSERT OR REPLACE INTO orders (order_id, maker_address, signed_order, nonce, resting_quantity, status, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'resting', ?6, ?7)",
                     rusqlite::params![
                         id,
                         address_to_bytes(maker).as_slice(),
                         blob,
+                        nonce_bytes.as_slice(),
+                        resting_qty_bytes.as_slice(),
                         now,
                         now,
                     ],
@@ -429,6 +435,157 @@ impl Db {
         }
 
         result
+    }
+
+    // -- Resting Orders --
+
+    pub fn load_resting_orders(&self) -> Result<Vec<(u64, Vec<u8>, U256, U256)>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT order_id, signed_order, nonce, resting_quantity FROM orders WHERE status = 'resting'",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let order_id: i64 = row.get(0)?;
+            let blob: Vec<u8> = row.get(1)?;
+            let nonce_bytes: Vec<u8> = row.get(2)?;
+            let resting_qty_bytes: Option<Vec<u8>> = row.get(3)?;
+            Ok((
+                order_id.cast_unsigned(),
+                blob,
+                nonce_bytes,
+                resting_qty_bytes,
+            ))
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (id, blob, nonce_bytes, resting_qty_bytes) = row?;
+            let nonce = u256_from_bytes(&nonce_bytes);
+            let resting_qty = resting_qty_bytes
+                .map(|b| u256_from_bytes(&b))
+                .unwrap_or_else(|| {
+                    bincode::deserialize::<SignedOrder>(&blob)
+                        .map(|o| o.quantity)
+                        .unwrap_or(U256::ZERO)
+                });
+            result.push((id, blob, nonce, resting_qty));
+        }
+        Ok(result)
+    }
+
+    pub fn find_order_by_nonce(&self, nonce: &U256) -> Result<Option<(u64, Address, Vec<u8>)>> {
+        let nonce_bytes = u256_to_bytes(*nonce);
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT order_id, maker_address, signed_order FROM orders WHERE nonce = ?1 AND status = 'resting'",
+        )?;
+        let result = stmt
+            .query_row(rusqlite::params![nonce_bytes.as_slice()], |row| {
+                let order_id: i64 = row.get(0)?;
+                let maker_bytes: Vec<u8> = row.get(1)?;
+                let blob: Vec<u8> = row.get(2)?;
+                Ok((order_id.cast_unsigned(), maker_bytes, blob))
+            })
+            .optional()?;
+        Ok(result.map(|(id, maker_bytes, blob)| (id, address_from_bytes(&maker_bytes), blob)))
+    }
+
+    pub fn cancel_order(
+        &self,
+        order_id: u64,
+        balance_updates: &[(Address, Address, U256, U256)],
+        pending_cancel: (Address, &U256),
+    ) -> Result<()> {
+        let conn = self.lock();
+        conn.execute_batch("BEGIN")?;
+
+        let result = (|| -> Result<()> {
+            let id = i64::try_from(order_id).expect("order_id exceeds i64::MAX");
+            let now = now_secs();
+            conn.execute(
+                "UPDATE orders SET status = 'cancelled', updated_at = ?1 WHERE order_id = ?2",
+                rusqlite::params![now, id],
+            )?;
+
+            for &(user, token, available, reserved) in balance_updates {
+                conn.execute(
+                    "INSERT OR REPLACE INTO ledger_balances (user_address, token_address, available, reserved)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![
+                        address_to_bytes(user).as_slice(),
+                        address_to_bytes(token).as_slice(),
+                        u256_to_bytes(available).as_slice(),
+                        u256_to_bytes(reserved).as_slice(),
+                    ],
+                )?;
+            }
+
+            let (maker, nonce) = pending_cancel;
+            conn.execute(
+                "INSERT OR IGNORE INTO pending_cancels (maker_address, nonce, created_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    address_to_bytes(maker).as_slice(),
+                    u256_to_bytes(*nonce).as_slice(),
+                    now,
+                ],
+            )?;
+
+            Ok(())
+        })();
+
+        match &result {
+            Ok(()) => conn.execute_batch("COMMIT")?,
+            Err(_) => {
+                let _ = conn.execute_batch("ROLLBACK");
+            }
+        }
+        result
+    }
+
+    // -- Pending Cancels --
+
+    pub fn save_pending_cancel(&self, maker: Address, nonce: &U256) -> Result<()> {
+        let now = now_secs();
+        let conn = self.lock();
+        conn.execute(
+            "INSERT OR IGNORE INTO pending_cancels (maker_address, nonce, created_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                address_to_bytes(maker).as_slice(),
+                u256_to_bytes(*nonce).as_slice(),
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_pending_cancels(&self) -> Result<Vec<(Address, U256)>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT maker_address, nonce FROM pending_cancels")?;
+        let rows = stmt.query_map([], |row| {
+            let maker_bytes: Vec<u8> = row.get(0)?;
+            let nonce_bytes: Vec<u8> = row.get(1)?;
+            Ok((maker_bytes, nonce_bytes))
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (maker_bytes, nonce_bytes) = row?;
+            result.push((
+                address_from_bytes(&maker_bytes),
+                u256_from_bytes(&nonce_bytes),
+            ));
+        }
+        Ok(result)
+    }
+
+    pub fn delete_pending_cancel(&self, maker: Address, nonce: &U256) -> Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "DELETE FROM pending_cancels WHERE maker_address = ?1 AND nonce = ?2",
+            rusqlite::params![
+                address_to_bytes(maker).as_slice(),
+                u256_to_bytes(*nonce).as_slice(),
+            ],
+        )?;
+        Ok(())
     }
 
     #[allow(clippy::missing_panics_doc)] // mutex poisoning is unrecoverable
@@ -753,7 +910,7 @@ mod tests {
                 &[trade],
                 &[(user, token, U256::from(50), U256::from(5))],
                 &[10],
-                Some((20, Address::from([0xCC; 20]), &resting)),
+                Some((20, Address::from([0xCC; 20]), &resting, resting.quantity)),
             )
             .unwrap();
 
@@ -804,5 +961,87 @@ mod tests {
         // Only order 2 should still be resting
         let cancelled = db.cancel_all_resting_orders().unwrap();
         assert_eq!(cancelled, 1);
+    }
+
+    // -- Resting Orders & Nonce Lookup --
+
+    #[test]
+    fn load_resting_orders_returns_resting_only() {
+        let (_dir, db) = temp_db();
+        let order1 = dummy_signed_order();
+        db.save_order(1, Address::ZERO, &order1, "resting").unwrap();
+
+        let mut order2 = dummy_signed_order();
+        order2.nonce = U256::from(99);
+        db.save_order(2, Address::ZERO, &order2, "resting").unwrap();
+        db.update_order_status(2, "filled").unwrap();
+
+        let resting = db.load_resting_orders().unwrap();
+        assert_eq!(resting.len(), 1);
+        assert_eq!(resting[0].0, 1);
+    }
+
+    #[test]
+    fn find_order_by_nonce_found() {
+        let (_dir, db) = temp_db();
+        let order = dummy_signed_order(); // nonce = 42
+        db.save_order(1, Address::ZERO, &order, "resting").unwrap();
+
+        let found = db.find_order_by_nonce(&U256::from(42)).unwrap();
+        assert!(found.is_some());
+        let (id, _maker, _blob) = found.unwrap();
+        assert_eq!(id, 1);
+    }
+
+    #[test]
+    fn find_order_by_nonce_not_found() {
+        let (_dir, db) = temp_db();
+        let result = db.find_order_by_nonce(&U256::from(999)).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn cancel_order_atomic() {
+        let (_dir, db) = temp_db();
+        let maker = Address::from([0xAA; 20]);
+        let token = Address::from([0xBB; 20]);
+        let nonce = U256::from(42);
+        db.save_balance(maker, token, U256::from(100), U256::from(50))
+            .unwrap();
+        db.save_order(1, Address::ZERO, &dummy_signed_order(), "resting")
+            .unwrap();
+
+        let balance_updates = vec![(maker, token, U256::from(150), U256::ZERO)];
+        db.cancel_order(1, &balance_updates, (maker, &nonce))
+            .unwrap();
+
+        let resting = db.load_resting_orders().unwrap();
+        assert!(resting.is_empty());
+
+        let balances = db.load_all_balances().unwrap();
+        assert_eq!(balances[&maker][&token].available, U256::from(150));
+        assert_eq!(balances[&maker][&token].reserved, U256::ZERO);
+
+        let pending = db.load_pending_cancels().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].0, maker);
+        assert_eq!(pending[0].1, nonce);
+    }
+
+    #[test]
+    fn pending_cancels_roundtrip() {
+        let (_dir, db) = temp_db();
+        let maker = Address::from([0xAA; 20]);
+        let nonce = U256::from(42);
+
+        db.save_pending_cancel(maker, &nonce).unwrap();
+        let pending = db.load_pending_cancels().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].0, maker);
+        assert_eq!(pending[0].1, nonce);
+
+        db.delete_pending_cancel(maker, &nonce).unwrap();
+        let pending = db.load_pending_cancels().unwrap();
+        assert!(pending.is_empty());
     }
 }

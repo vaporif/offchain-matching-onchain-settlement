@@ -35,6 +35,7 @@ pub struct AppState {
     pub ledger: Ledger,
     pub accepted_nonces: HashSet<B256>,
     pub order_map: HashMap<OrderId, SignedOrder>,
+    pub order_nonce_map: HashMap<OrderId, (Address, U256, Address, U256)>,
     pub pending_trades: Vec<(i64, Trade)>,
     pub domain_separator: B256,
     pub base_token: Address,
@@ -60,6 +61,7 @@ impl AppState {
             ledger: Ledger::new(),
             accepted_nonces: HashSet::new(),
             order_map: HashMap::new(),
+            order_nonce_map: HashMap::new(),
             pending_trades: Vec::new(),
             domain_separator: compute_domain_separator(chain_id, contract_address),
             base_token,
@@ -209,6 +211,25 @@ impl AppState {
 
         if result.resting {
             self.order_map.insert(order_id, order.clone());
+            let collateral_token = match order.side {
+                Side::Buy => self.quote_token,
+                Side::Sell => self.base_token,
+            };
+            let resting_collateral = match order.side {
+                Side::Buy => {
+                    (result.resting_qty * order.price) / U256::from(10).pow(U256::from(18))
+                }
+                Side::Sell => result.resting_qty,
+            };
+            self.order_nonce_map.insert(
+                order_id,
+                (
+                    order.maker,
+                    order.nonce,
+                    collateral_token,
+                    resting_collateral,
+                ),
+            );
         }
 
         // Persist atomically: nonce, trades, balances, filled makers, resting order
@@ -220,7 +241,7 @@ impl AppState {
             .filter(|id| !self.engine.has_order(*id))
             .collect();
         let resting_order = if result.resting {
-            Some((order_id, order.maker, &order))
+            Some((order_id, order.maker, &order, result.resting_qty))
         } else {
             None
         };
@@ -246,6 +267,42 @@ impl AppState {
         }
 
         Ok((order_id, client_fills, dispatches))
+    }
+
+    pub fn cancel_order(
+        &mut self,
+        nonce: U256,
+        signature: &alloy::primitives::Bytes,
+    ) -> Result<(u64, Address)> {
+        let signer = crate::eip712::recover_cancel_signer(nonce, signature, self.domain_separator)?;
+
+        let (&order_id, &(maker, _nonce, collateral_token, collateral_amount)) = self
+            .order_nonce_map
+            .iter()
+            .find(|(_, (_, n, _, _))| *n == nonce)
+            .ok_or_else(|| eyre::eyre!("no resting order with nonce {nonce}"))?;
+
+        if signer != maker {
+            bail!("signer does not match order maker");
+        }
+
+        let removed = self.engine.cancel(order_id);
+        if !removed {
+            bail!("order not found in book");
+        }
+
+        self.ledger
+            .release(maker, collateral_token, collateral_amount);
+
+        let balance_updates = self.ledger.snapshot();
+
+        self.db
+            .cancel_order(order_id, &balance_updates, (maker, &nonce))?;
+
+        self.order_map.remove(&order_id);
+        self.order_nonce_map.remove(&order_id);
+
+        Ok((order_id, maker))
     }
 
     pub fn drain_batch(&mut self) -> Vec<(i64, Trade)> {

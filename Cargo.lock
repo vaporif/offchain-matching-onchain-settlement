@@ -1838,8 +1838,10 @@ version = "0.0.0"
 dependencies = [
  "alloy",
  "axum",
+ "bincode",
  "eyre",
  "gateway",
+ "matching-engine",
  "persistence",
  "reqwest",
  "serde_json",

@@ -18,6 +18,7 @@ use crate::routes::SharedState;
 pub fn build_router(state: SharedState) -> Router {
     Router::new()
         .route("/orders", post(routes::submit_order))
+        .route("/cancel", post(routes::cancel_order))
         .route("/orderbook", get(routes::get_orderbook))
         .route("/balances/{address}", get(routes::get_balances))
         .route("/ws", get(ws::ws_handler))
