@@ -1,0 +1,13 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+    patch:
+      default:
+        target: 80%
+
+ignore:
+  - "crates/cli/src/main.rs"
+  - "crates/gateway/src/main.rs"
+  - "crates/e2e-tests/**"

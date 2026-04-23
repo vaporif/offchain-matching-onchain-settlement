@@ -98,8 +98,9 @@ enum Commands {
     },
     /// Cancel an order
     Cancel {
+        /// Nonce of the order to cancel
         #[arg(long)]
-        order_id: u64,
+        nonce: u64,
     },
     /// Show exchange balances
     Status,
@@ -231,9 +232,61 @@ async fn main() -> Result<()> {
             let body: serde_json::Value = resp.json().await?;
             println!("{}", serde_json::to_string_pretty(&body)?);
         }
-        Commands::Cancel { order_id } => {
-            println!("Cancel not yet implemented for MVP (requires signed cancel message)");
-            let _ = order_id;
+        Commands::Cancel { nonce } => {
+            let chain_id = provider.get_chain_id().await?;
+            let domain_separator = {
+                use alloy::primitives::keccak256;
+                use alloy::sol_types::SolValue;
+                let domain_type_hash = keccak256(
+                    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+                );
+                let name_hash = keccak256("HybridExchange");
+                let version_hash = keccak256("1");
+                keccak256(
+                    (
+                        domain_type_hash,
+                        name_hash,
+                        version_hash,
+                        U256::from(chain_id),
+                        cli.exchange,
+                    )
+                        .abi_encode(),
+                )
+            };
+
+            let typehash = alloy::primitives::keccak256(b"CancelOrder(uint256 nonce)");
+            let struct_hash = alloy::primitives::keccak256(
+                [typehash.as_slice(), &U256::from(nonce).to_be_bytes::<32>()].concat(),
+            );
+            let digest = alloy::primitives::keccak256(
+                [
+                    &[0x19, 0x01],
+                    domain_separator.as_slice(),
+                    struct_hash.as_slice(),
+                ]
+                .concat(),
+            );
+
+            let sig = signer.sign_hash(&digest).await?;
+            let signature = Bytes::from(sig.as_bytes().to_vec());
+
+            let client = reqwest::Client::new();
+            let resp = client
+                .post(format!("{}/cancel", cli.gateway))
+                .json(&serde_json::json!({
+                    "nonce": U256::from(nonce).to_string(),
+                    "signature": signature,
+                }))
+                .send()
+                .await?;
+
+            let status = resp.status();
+            let body: serde_json::Value = resp.json().await?;
+            if status.is_success() {
+                println!("Order cancelled: {}", serde_json::to_string_pretty(&body)?);
+            } else {
+                eprintln!("Cancel failed: {}", body["error"]);
+            }
         }
         Commands::Status => {
             let client = reqwest::Client::new();

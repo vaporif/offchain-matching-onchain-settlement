@@ -35,6 +35,7 @@ pub struct AppState {
     pub ledger: Ledger,
     pub accepted_nonces: HashSet<B256>,
     pub order_map: HashMap<OrderId, SignedOrder>,
+    pub order_nonce_map: HashMap<OrderId, (Address, U256, Address, U256)>,
     pub pending_trades: Vec<(i64, Trade)>,
     pub domain_separator: B256,
     pub base_token: Address,
@@ -60,6 +61,7 @@ impl AppState {
             ledger: Ledger::new(),
             accepted_nonces: HashSet::new(),
             order_map: HashMap::new(),
+            order_nonce_map: HashMap::new(),
             pending_trades: Vec::new(),
             domain_separator: compute_domain_separator(chain_id, contract_address),
             base_token,
@@ -209,6 +211,25 @@ impl AppState {
 
         if result.resting {
             self.order_map.insert(order_id, order.clone());
+            let collateral_token = match order.side {
+                Side::Buy => self.quote_token,
+                Side::Sell => self.base_token,
+            };
+            let resting_collateral = match order.side {
+                Side::Buy => {
+                    (result.resting_qty * order.price) / U256::from(10).pow(U256::from(18))
+                }
+                Side::Sell => result.resting_qty,
+            };
+            self.order_nonce_map.insert(
+                order_id,
+                (
+                    order.maker,
+                    order.nonce,
+                    collateral_token,
+                    resting_collateral,
+                ),
+            );
         }
 
         // Persist atomically: nonce, trades, balances, filled makers, resting order
@@ -220,7 +241,7 @@ impl AppState {
             .filter(|id| !self.engine.has_order(*id))
             .collect();
         let resting_order = if result.resting {
-            Some((order_id, order.maker, &order))
+            Some((order_id, order.maker, &order, result.resting_qty))
         } else {
             None
         };
@@ -246,6 +267,42 @@ impl AppState {
         }
 
         Ok((order_id, client_fills, dispatches))
+    }
+
+    pub fn cancel_order(
+        &mut self,
+        nonce: U256,
+        signature: &alloy::primitives::Bytes,
+    ) -> Result<(u64, Address)> {
+        let signer = crate::eip712::recover_cancel_signer(nonce, signature, self.domain_separator)?;
+
+        let (&order_id, &(maker, _nonce, collateral_token, collateral_amount)) = self
+            .order_nonce_map
+            .iter()
+            .find(|(_, (_, n, _, _))| *n == nonce)
+            .ok_or_else(|| eyre::eyre!("no resting order with nonce {nonce}"))?;
+
+        if signer != maker {
+            bail!("signer does not match order maker");
+        }
+
+        let removed = self.engine.cancel(order_id);
+        if !removed {
+            bail!("order not found in book");
+        }
+
+        self.ledger
+            .release(maker, collateral_token, collateral_amount);
+
+        let balance_updates = self.ledger.snapshot();
+
+        self.db
+            .cancel_order(order_id, &balance_updates, (maker, &nonce))?;
+
+        self.order_map.remove(&order_id);
+        self.order_nonce_map.remove(&order_id);
+
+        Ok((order_id, maker))
     }
 
     pub fn drain_batch(&mut self) -> Vec<(i64, Trade)> {
@@ -500,6 +557,153 @@ mod tests {
                 .ledger
                 .total(signer_taker.address(), state.quote_token),
             fund - expected_quote
+        );
+    }
+
+    async fn sign_cancel(nonce: U256, signer: &PrivateKeySigner, domain: B256) -> Bytes {
+        let struct_hash = crate::eip712::cancel_order_hash(nonce);
+        let digest = alloy::primitives::keccak256(
+            [&[0x19, 0x01], domain.as_slice(), struct_hash.as_slice()].concat(),
+        );
+        let sig = signer.sign_hash(&digest).await.unwrap();
+        sig.as_bytes().to_vec().into()
+    }
+
+    #[tokio::test]
+    async fn cancel_resting_order_releases_collateral() {
+        let signer = PrivateKeySigner::random();
+        let (_dir, mut state) = setup_state();
+
+        let e18 = U256::from(10).pow(U256::from(18));
+        let fund = U256::from(1000) * e18;
+        state
+            .ledger
+            .credit(signer.address(), state.base_token, fund);
+
+        let price = U256::from(2) * e18;
+        let quantity = U256::from(10) * e18;
+        let nonce = U256::from(1);
+
+        let sell = SignedOrder {
+            side: Side::Sell,
+            maker: signer.address(),
+            base_token: state.base_token,
+            quote_token: state.quote_token,
+            price,
+            quantity,
+            nonce,
+            expiry: U256::from(u64::MAX),
+            signature: Bytes::new(),
+        };
+        let sell_signed = sign_order(&sell, &signer, state.domain_separator).await;
+        state.submit_order(sell_signed, OrderType::Limit).unwrap();
+
+        // Collateral is reserved
+        assert_eq!(
+            state.ledger.available(signer.address(), state.base_token),
+            fund - quantity
+        );
+
+        let cancel_sig = sign_cancel(nonce, &signer, state.domain_separator).await;
+        let (order_id, maker) = state.cancel_order(nonce, &cancel_sig).unwrap();
+        assert_eq!(maker, signer.address());
+        assert!(order_id > 0);
+
+        // Collateral released
+        assert_eq!(
+            state.ledger.available(signer.address(), state.base_token),
+            fund
+        );
+        assert!(!state.order_map.contains_key(&order_id));
+        assert!(!state.order_nonce_map.contains_key(&order_id));
+    }
+
+    #[tokio::test]
+    async fn cancel_wrong_signer_fails() {
+        let maker_signer = PrivateKeySigner::random();
+        let impersonator = PrivateKeySigner::random();
+        let (_dir, mut state) = setup_state();
+
+        let e18 = U256::from(10).pow(U256::from(18));
+        let fund = U256::from(1000) * e18;
+        state
+            .ledger
+            .credit(maker_signer.address(), state.base_token, fund);
+
+        let nonce = U256::from(1);
+        let sell = SignedOrder {
+            side: Side::Sell,
+            maker: maker_signer.address(),
+            base_token: state.base_token,
+            quote_token: state.quote_token,
+            price: U256::from(100) * e18,
+            quantity: U256::from(10) * e18,
+            nonce,
+            expiry: U256::from(u64::MAX),
+            signature: Bytes::new(),
+        };
+        let sell_signed = sign_order(&sell, &maker_signer, state.domain_separator).await;
+        state.submit_order(sell_signed, OrderType::Limit).unwrap();
+
+        let cancel_sig = sign_cancel(nonce, &impersonator, state.domain_separator).await;
+        let result = state.cancel_order(nonce, &cancel_sig);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("does not match"));
+    }
+
+    #[tokio::test]
+    async fn cancel_nonexistent_nonce_fails() {
+        let signer = PrivateKeySigner::random();
+        let (_dir, mut state) = setup_state();
+
+        let nonce = U256::from(999);
+        let cancel_sig = sign_cancel(nonce, &signer, state.domain_separator).await;
+        let result = state.cancel_order(nonce, &cancel_sig);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no resting order"));
+    }
+
+    #[tokio::test]
+    async fn cancel_buy_order_releases_quote_collateral() {
+        let signer = PrivateKeySigner::random();
+        let (_dir, mut state) = setup_state();
+
+        let e18 = U256::from(10).pow(U256::from(18));
+        let fund = U256::from(1000) * e18;
+        state
+            .ledger
+            .credit(signer.address(), state.quote_token, fund);
+
+        let price = U256::from(5) * e18;
+        let quantity = U256::from(10) * e18;
+        let nonce = U256::from(1);
+
+        let buy = SignedOrder {
+            side: Side::Buy,
+            maker: signer.address(),
+            base_token: state.base_token,
+            quote_token: state.quote_token,
+            price,
+            quantity,
+            nonce,
+            expiry: U256::from(u64::MAX),
+            signature: Bytes::new(),
+        };
+        let buy_signed = sign_order(&buy, &signer, state.domain_separator).await;
+        state.submit_order(buy_signed, OrderType::Limit).unwrap();
+
+        let expected_collateral = (quantity * price) / e18;
+        assert_eq!(
+            state.ledger.available(signer.address(), state.quote_token),
+            fund - expected_collateral
+        );
+
+        let cancel_sig = sign_cancel(nonce, &signer, state.domain_separator).await;
+        state.cancel_order(nonce, &cancel_sig).unwrap();
+
+        assert_eq!(
+            state.ledger.available(signer.address(), state.quote_token),
+            fund
         );
     }
 

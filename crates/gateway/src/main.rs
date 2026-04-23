@@ -2,11 +2,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use clap::Parser;
 use eyre::Result;
 use persistence::Db;
+use settlement_core::Settlement;
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -77,7 +78,7 @@ async fn main() -> Result<()> {
     );
 
     // -- Recovery sequence --
-    let (ledger, max_id, pending_trades, unexpired_nonces) = {
+    let (ledger, max_id, pending_trades, unexpired_nonces, resting_orders, pending_cancels) = {
         let db = db.clone();
         tokio::task::spawn_blocking(move || -> Result<_> {
             let balances = db.load_all_balances()?;
@@ -85,10 +86,17 @@ async fn main() -> Result<()> {
 
             let max_id = db.load_max_order_id()?;
 
-            let cancelled = db.cancel_all_resting_orders()?;
-            if cancelled > 0 {
-                info!(count = cancelled, "cancelled stale resting orders");
-            }
+            let resting_orders = db.load_resting_orders()?;
+            info!(
+                count = resting_orders.len(),
+                "loaded resting orders for restoration"
+            );
+
+            let pending_cancels = db.load_pending_cancels()?;
+            info!(
+                count = pending_cancels.len(),
+                "loaded pending on-chain cancels"
+            );
 
             let pending = db.load_pending_trades()?;
             info!(count = pending.len(), "recovered pending trades");
@@ -105,7 +113,14 @@ async fn main() -> Result<()> {
             let unexpired_nonces = db.load_unexpired_nonces(now)?;
             info!(count = unexpired_nonces.len(), "recovered unexpired nonces");
 
-            Ok((ledger, max_id, pending, unexpired_nonces))
+            Ok((
+                ledger,
+                max_id,
+                pending,
+                unexpired_nonces,
+                resting_orders,
+                pending_cancels,
+            ))
         })
         .await??
     };
@@ -139,6 +154,84 @@ async fn main() -> Result<()> {
         for nonce in unexpired_nonces {
             s.accepted_nonces.insert(nonce);
         }
+    }
+
+    // Restore resting orders
+    {
+        let mut s = state.lock().await;
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before epoch")
+            .as_secs();
+
+        for (order_id, blob, nonce, resting_qty) in &resting_orders {
+            let order: types::SignedOrder = match bincode::deserialize(blob) {
+                Ok(o) => o,
+                Err(e) => {
+                    tracing::warn!(order_id, error = %e, "skipping undeserializable resting order");
+                    continue;
+                }
+            };
+
+            let expiry_secs = order.expiry.try_into().unwrap_or(u64::MAX);
+            if expiry_secs < now_secs {
+                info!(order_id, "expiring stale resting order");
+                let db = db.clone();
+                let oid = *order_id;
+                tokio::task::spawn_blocking(move || {
+                    let _ = db.update_order_status(oid, "cancelled");
+                });
+                continue;
+            }
+
+            s.engine
+                .restore_order(*order_id, order.side, order.price, *resting_qty);
+
+            let hash = gateway::eip712::order_hash(&order);
+            s.accepted_nonces.insert(hash);
+
+            let collateral_token = if order.side == types::Side::Buy {
+                s.quote_token
+            } else {
+                s.base_token
+            };
+            let collateral = if order.side == types::Side::Buy {
+                (*resting_qty * order.price) / U256::from(10u64).pow(U256::from(18u64))
+            } else {
+                *resting_qty
+            };
+            s.order_map.insert(*order_id, order.clone());
+            s.order_nonce_map.insert(
+                *order_id,
+                (order.maker, *nonce, collateral_token, collateral),
+            );
+
+            info!(order_id, "restored resting order");
+        }
+    }
+
+    // Retry pending on-chain cancels
+    if !pending_cancels.is_empty() {
+        let settlement_for_cancel = settlement.clone();
+        let db_for_cancel = db.clone();
+        tokio::spawn(async move {
+            for (maker, nonce) in pending_cancels {
+                info!(%maker, %nonce, "retrying on-chain cancel");
+                match settlement_for_cancel.cancel_nonce(maker, nonce).await {
+                    Ok(()) => {
+                        let db = db_for_cancel.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            db.delete_pending_cancel(maker, &nonce)
+                        })
+                        .await;
+                        info!(%maker, %nonce, "on-chain cancel confirmed");
+                    }
+                    Err(e) => {
+                        tracing::warn!(%maker, %nonce, error = %e, "on-chain cancel failed, will retry next startup");
+                    }
+                }
+            }
+        });
     }
 
     let head = provider.get_block_number().await?;

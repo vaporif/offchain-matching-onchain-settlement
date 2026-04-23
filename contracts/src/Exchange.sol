@@ -29,6 +29,7 @@ contract Exchange {
     event Deposited(address indexed user, address indexed token, uint256 amount);
     event Withdrawn(address indexed user, address indexed token, uint256 amount);
     event BatchSettled(uint256 tradeCount);
+    event NonceCancelled(address indexed sender, address indexed maker, uint256 nonce);
 
     error Unauthorized();
     error InsufficientBalance();
@@ -66,6 +67,12 @@ contract Exchange {
         balances[msg.sender][token] -= amount;
         IERC20(token).transfer(msg.sender, amount);
         emit Withdrawn(msg.sender, token, amount);
+    }
+
+    function cancelNonce(address maker, uint256 nonce) external {
+        bytes32 nonceKey = keccak256(abi.encodePacked(maker, nonce));
+        usedNonces[nonceKey] = true;
+        emit NonceCancelled(msg.sender, maker, nonce);
     }
 
     function settleBatch(

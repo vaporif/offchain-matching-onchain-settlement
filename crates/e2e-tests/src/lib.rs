@@ -195,4 +195,41 @@ impl TestEnv {
         let mut s = self.state.lock().await;
         s.ledger.credit(user, token, amount);
     }
+
+    pub async fn sign_cancel(
+        &self,
+        nonce: U256,
+        signer: &PrivateKeySigner,
+    ) -> alloy::primitives::Bytes {
+        let typehash = alloy::primitives::keccak256(b"CancelOrder(uint256 nonce)");
+        let struct_hash = alloy::primitives::keccak256(
+            [typehash.as_slice(), &nonce.to_be_bytes::<32>()].concat(),
+        );
+        let digest = alloy::primitives::keccak256(
+            [
+                &[0x19, 0x01],
+                self.domain_separator.as_slice(),
+                struct_hash.as_slice(),
+            ]
+            .concat(),
+        );
+        let sig = signer.sign_hash(&digest).await.expect("sign cancel");
+        alloy::primitives::Bytes::from(sig.as_bytes().to_vec())
+    }
+
+    pub async fn cancel_order(
+        &self,
+        nonce: U256,
+        signature: alloy::primitives::Bytes,
+    ) -> reqwest::Response {
+        self.client
+            .post(format!("{}/cancel", self.base_url))
+            .json(&serde_json::json!({
+                "nonce": nonce.to_string(),
+                "signature": signature,
+            }))
+            .send()
+            .await
+            .expect("send cancel request")
+    }
 }

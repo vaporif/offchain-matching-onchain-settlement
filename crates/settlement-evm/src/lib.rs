@@ -121,6 +121,18 @@ impl<P: Provider + Clone + Send + Sync + 'static> Settlement for EvmSettlement<P
         Ok(Box::pin(stream))
     }
 
+    async fn cancel_nonce(&self, maker: Address, nonce: U256) -> Result<()> {
+        let tx = self
+            .contract
+            .cancelNonce(maker, nonce)
+            .send()
+            .await?
+            .watch()
+            .await?;
+        info!(tx_hash = %tx, %maker, %nonce, "cancelNonce confirmed");
+        Ok(())
+    }
+
     async fn get_deposits_in_range(&self, from_block: u64, to_block: u64) -> Result<Vec<Deposit>> {
         let filter = Filter::new()
             .address(*self.contract.address())

@@ -245,4 +245,57 @@ contract ExchangeTest is Test {
         vm.expectRevert(Exchange.Unauthorized.selector);
         exchange.settleBatch(empty, empty, emptySigs, emptySigs, emptyUints, emptyUints);
     }
+
+    function test_cancelNonce_burnsNonce() public {
+        exchange.cancelNonce(maker, 1);
+        bytes32 nonceKey = keccak256(abi.encodePacked(maker, uint256(1)));
+        assertTrue(exchange.usedNonces(nonceKey));
+    }
+
+    function test_cancelNonce_emitsEvent() public {
+        vm.expectEmit(true, true, false, true);
+        emit Exchange.NonceCancelled(address(this), maker, 1);
+        exchange.cancelNonce(maker, 1);
+    }
+
+    function test_cancelNonce_preventsSettlement() public {
+        exchange.cancelNonce(maker, 1);
+
+        Exchange.Order memory makerOrder = _makerSellOrder(1e18, 10e18, 1);
+        Exchange.Order memory takerOrder = _takerBuyOrder(1e18, 10e18, 1);
+
+        bytes memory makerSig = _signOrder(makerOrder, makerKey);
+        bytes memory takerSig = _signOrder(takerOrder, takerKey);
+
+        Exchange.Order[] memory makerOrders = new Exchange.Order[](1);
+        Exchange.Order[] memory takerOrders = new Exchange.Order[](1);
+        bytes[] memory makerSigs = new bytes[](1);
+        bytes[] memory takerSigs = new bytes[](1);
+        uint256[] memory quantities = new uint256[](1);
+        uint256[] memory prices = new uint256[](1);
+
+        makerOrders[0] = makerOrder;
+        takerOrders[0] = takerOrder;
+        makerSigs[0] = makerSig;
+        takerSigs[0] = takerSig;
+        quantities[0] = 10e18;
+        prices[0] = 1e18;
+
+        vm.expectRevert(Exchange.NonceAlreadyUsed.selector);
+        exchange.settleBatch(makerOrders, takerOrders, makerSigs, takerSigs, quantities, prices);
+    }
+
+    function test_cancelNonce_idempotent() public {
+        exchange.cancelNonce(maker, 1);
+        exchange.cancelNonce(maker, 1);
+        bytes32 nonceKey = keccak256(abi.encodePacked(maker, uint256(1)));
+        assertTrue(exchange.usedNonces(nonceKey));
+    }
+
+    function test_cancelNonce_anyoneCanCall() public {
+        vm.prank(taker);
+        exchange.cancelNonce(maker, 42);
+        bytes32 nonceKey = keccak256(abi.encodePacked(maker, uint256(42)));
+        assertTrue(exchange.usedNonces(nonceKey));
+    }
 }

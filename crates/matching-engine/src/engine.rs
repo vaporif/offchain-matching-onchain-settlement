@@ -143,6 +143,17 @@ impl MatchingEngine {
         self.book.cancel(order_id).is_some()
     }
 
+    /// Inserts with a pre-existing ID without advancing `next_id`.
+    pub fn restore_order(&mut self, id: OrderId, side: Side, price: U256, quantity: U256) {
+        let order = EngineOrder {
+            id,
+            side,
+            price,
+            quantity,
+        };
+        self.book.insert(order);
+    }
+
     pub fn best_bid(&self) -> Option<U256> {
         self.book.best_bid()
     }
@@ -294,6 +305,27 @@ mod tests {
         let result = engine.submit(Side::Buy, U256::from(100), U256::from(3), OrderType::Limit);
         assert_eq!(result.fills.len(), 1);
         assert_eq!(result.fills[0].maker_id, maker_id);
+    }
+
+    #[test]
+    fn restore_order_preserves_id() {
+        let mut engine = MatchingEngine::new();
+        engine.restore_order(5, Side::Sell, U256::from(100), U256::from(10));
+        assert!(engine.has_order(5));
+        // The next submitted order gets ID 1 (not 6), since restore doesn't advance next_id
+        let result = engine.submit(Side::Buy, U256::from(100), U256::from(5), OrderType::Limit);
+        assert_eq!(result.fills[0].maker_id, 5);
+        assert_eq!(result.fills[0].taker_id, 1);
+    }
+
+    #[test]
+    fn restore_order_is_matchable() {
+        let mut engine = MatchingEngine::new();
+        engine.restore_order(10, Side::Sell, U256::from(100), U256::from(20));
+        let result = engine.submit(Side::Buy, U256::from(100), U256::from(5), OrderType::Limit);
+        assert_eq!(result.fills.len(), 1);
+        assert_eq!(result.fills[0].maker_id, 10);
+        assert_eq!(result.fills[0].quantity, U256::from(5));
     }
 
     #[test]
